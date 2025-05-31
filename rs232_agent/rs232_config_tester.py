@@ -30,13 +30,7 @@ class RS232TesterApp:
         self.data_queue = queue.Queue()
         self.check_queue_interval = 30  # milliseconds
 
-        # --- เพิ่มปุ่ม Save Config ---
-        self.save_config_button = ttk.Button(control_frame, text="Save Config", command=self.save_configuration)
-        self.save_config_button.pack(side="left", padx=5)
-        # --------------------------
 
-        self.config_file_name = "scale_config.ini" # ชื่อไฟล์ Config
-        self.load_configuration() # <--- โหลด Config ตอนเริ่มโปรแกรม (ถ้ามี)
 
         # --- Buffer สำหรับ Data Fragmentation ---
         self.read_buffer = b''
@@ -97,6 +91,10 @@ class RS232TesterApp:
         self.clear_log_button = ttk.Button(control_frame, text="Clear Log", command=self.clear_log)
         self.clear_log_button.pack(side="left", padx=5)
 
+        # --- *** แก้ไขตรงนี้: ย้ายปุ่ม Save Config มาสร้างหลังจาก control_frame ถูกสร้างแล้ว *** ---
+        self.save_config_button = ttk.Button(control_frame, text="Save Config", command=self.save_configuration)
+        self.save_config_button.pack(side="left", padx=5)
+
         # --- Live Weight Display ---
         current_weight_frame = ttk.Frame(root)
         current_weight_frame.pack(padx=10, pady=(5, 0), fill="x")
@@ -116,6 +114,9 @@ class RS232TesterApp:
                                                   font=("Consolas", 9))  # เปลี่ยน font ให้ดูเหมือน console
         self.log_text.pack(fill="both", expand=True, padx=5, pady=5)
         self.log_text.configure(state='disabled')
+
+        self.config_file_name = "scale_config.ini"
+        self.load_configuration() # โหลด Config ตอนเริ่ม (ควรจะอยู่หลังจาก UI elements ที่จะ set ค่า ถูกสร้างแล้ว)
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.log_message("DEBUG_INIT: Application initialized.")
