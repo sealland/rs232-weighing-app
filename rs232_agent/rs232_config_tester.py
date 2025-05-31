@@ -5,6 +5,8 @@ import threading
 import time
 import re
 import queue
+import configparser
+import os
 
 # --- Default Configuration ---
 DEFAULT_SERIAL_PORT = "COM1"
@@ -28,11 +30,21 @@ class RS232TesterApp:
         self.data_queue = queue.Queue()
         self.check_queue_interval = 30  # milliseconds
 
+        # --- เพิ่มปุ่ม Save Config ---
+        self.save_config_button = ttk.Button(control_frame, text="Save Config", command=self.save_configuration)
+        self.save_config_button.pack(side="left", padx=5)
+        # --------------------------
+
+        self.config_file_name = "scale_config.ini" # ชื่อไฟล์ Config
+        self.load_configuration() # <--- โหลด Config ตอนเริ่มโปรแกรม (ถ้ามี)
+
         # --- Buffer สำหรับ Data Fragmentation ---
         self.read_buffer = b''
         self.STX = b'\x02'
         self.ETX = b'\x03'
         # ------------------------------------
+
+
 
         # --- Configuration Frame ---
         config_frame = ttk.LabelFrame(root, text="Serial Port Configuration")
@@ -120,6 +132,50 @@ class RS232TesterApp:
             self.log_text.configure(state='disabled')
         else:
             print(f"LOG_EARLY: {message}")  # ถ้า log_text ยังไม่พร้อม ให้ print ไป console
+
+    def save_configuration(self):
+        self.log_message("DEBUG_SAVE_CONFIG: Attempting to save configuration...")
+        config = configparser.ConfigParser()
+        config['SerialConfig'] = {
+            'Port': self.com_port_var.get(),
+            'BaudRate': self.baud_rate_var.get(),
+            'Parity': self.parity_var.get(),  # เก็บเป็น Key 'N', 'E', 'O'
+            'StopBits': self.stop_bits_var.get(),  # เก็บเป็น '1', '1.5', '2'
+            'ByteSize': self.byte_size_var.get(),  # เก็บเป็น '8', '7', '5'
+            'ReadTimeout': self.timeout_var.get()
+        }
+        try:
+            with open(self.config_file_name, 'w') as configfile:
+                config.write(configfile)
+            self.log_message(f"INFO: Configuration saved to {self.config_file_name}")
+            messagebox.showinfo("Save Configuration", f"Configuration saved to {self.config_file_name}")
+        except Exception as e:
+            self.log_message(f"ERROR_SAVE_CONFIG: Failed to save configuration: {e}")
+            messagebox.showerror("Save Error", f"Failed to save configuration:\n{e}")
+
+    def load_configuration(self):
+        self.log_message("DEBUG_LOAD_CONFIG: Attempting to load configuration...")
+        if not os.path.exists(self.config_file_name):
+            self.log_message(f"INFO: Configuration file '{self.config_file_name}' not found. Using default values.")
+            return
+
+        config = configparser.ConfigParser()
+        try:
+            config.read(self.config_file_name)
+            if 'SerialConfig' in config:
+                cfg = config['SerialConfig']
+                self.com_port_var.set(cfg.get('Port', DEFAULT_SERIAL_PORT))
+                self.baud_rate_var.set(cfg.get('BaudRate', str(DEFAULT_BAUD_RATE)))
+                self.parity_var.set(cfg.get('Parity', DEFAULT_PARITY))
+                self.stop_bits_var.set(cfg.get('StopBits', str(DEFAULT_STOP_BITS)))
+                self.byte_size_var.set(cfg.get('ByteSize', str(DEFAULT_BYTE_SIZE)))
+                self.timeout_var.set(cfg.get('ReadTimeout', str(DEFAULT_READ_TIMEOUT)))
+                self.log_message(f"INFO: Configuration loaded from {self.config_file_name}")
+            else:
+                self.log_message(
+                    f"WARNING: 'SerialConfig' section not found in {self.config_file_name}. Using defaults.")
+        except Exception as e:
+            self.log_message(f"ERROR_LOAD_CONFIG: Failed to load configuration: {e}")
 
     def clear_log(self):
         self.log_message("DEBUG_CLEAR_LOG: Clearing log output.")
