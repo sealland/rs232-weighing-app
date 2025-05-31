@@ -9,10 +9,10 @@ import queue
 # --- Default Configuration ---
 DEFAULT_SERIAL_PORT = "COM1"
 DEFAULT_BAUD_RATE = 1200
-DEFAULT_PARITY = "N"
+DEFAULT_PARITY = "E"
 DEFAULT_STOP_BITS = 1
-DEFAULT_BYTE_SIZE = 8
-DEFAULT_READ_TIMEOUT = 1.5  # หรือค่าที่คุณต้องการ
+DEFAULT_BYTE_SIZE = 7
+DEFAULT_READ_TIMEOUT = 0.05  # หรือค่าที่คุณต้องการ
 
 
 class RS232TesterApp:
@@ -26,7 +26,13 @@ class RS232TesterApp:
         self.read_thread = None  # จะถูกสร้างใน start_reading
 
         self.data_queue = queue.Queue()
-        self.check_queue_interval = 50  # milliseconds
+        self.check_queue_interval = 30  # milliseconds
+
+        # --- Buffer สำหรับ Data Fragmentation ---
+        self.read_buffer = b''
+        self.STX = b'\x02'
+        self.ETX = b'\x03'
+        # ------------------------------------
 
         # --- Configuration Frame ---
         config_frame = ttk.LabelFrame(root, text="Serial Port Configuration")
@@ -154,11 +160,14 @@ class RS232TesterApp:
         return "N/A"
 
     def update_live_weight_label(self, text_to_display):
-        self.log_message(f"DEBUG_LIVE_WEIGHT_UPDATE: Setting Live Weight to '{text_to_display}'")  # <--- เพิ่ม Log นี้
+        self.log_message(f"DEBUG_LIVE_WEIGHT_UPDATE: Attempting to set Live Weight to '{text_to_display}'")
         if text_to_display is not None and isinstance(text_to_display, str):
             self.current_weight_var.set(text_to_display)
+            self.log_message(f"DEBUG_LIVE_WEIGHT_UPDATE: Successfully set Live Weight to '{text_to_display}'")
         else:
-            self.current_weight_var.set("---")
+            # self.current_weight_var.set("---") # อาจจะไม่ต้องการตั้งเป็น "---" ถ้าอยากให้คงค่าเดิม
+            self.log_message(
+                f"DEBUG_LIVE_WEIGHT_UPDATE: Received invalid data ('{text_to_display}'), Live Weight not changed or set to '---'.")
 
     def start_reading(self):
         self.log_message("DEBUG_START_READING: Called.")
@@ -177,10 +186,10 @@ class RS232TesterApp:
             byte_size = self.byte_size_map[byte_size_key]
             timeout_val_ui = float(self.timeout_var.get())
             if timeout_val_ui <= 0:
-                self.log_message("DEBUG_START_READING: Invalid timeout, using 1.0s.")
-                messagebox.showwarning("Input Warning",
-                                       "Read Timeout must be a positive number. Using 1.0s as default.")
-                timeout_val_ui = 1.0
+                #self.log_message("DEBUG_START_READING: Invalid timeout, using 1.0s.")
+                #messagebox.showwarning("Input Warning","Read Timeout must be a positive number. Using 1.0s as default.")
+                timeout_val_ui = 0.05
+            #self.ser = serial.Serial(..., timeout=timeout_val_ui)
         except ValueError:
             self.log_message("DEBUG_START_READING: ValueError in config.")
             messagebox.showerror("Input Error", "Baud Rate and Read Timeout must be valid numbers.")
@@ -238,7 +247,102 @@ class RS232TesterApp:
             self.ser = None
             self.update_button_state()
 
-    def read_serial_data(self):
+    def read_serial_data(self):  # Function for the Background Thread
+        thread_name = threading.current_thread().name
+        self.data_queue.put(
+            {"log_direct": f"DEBUG_THREAD ({thread_name}): ENTERING. Buffer method. is_reading: {self.is_reading}"})
+
+        try:
+            loop_count = 0
+            while self.is_reading and self.ser and self.ser.is_open:
+                loop_count += 1
+                bytes_to_read = self.ser.in_waiting or 1  # อ่านที่มีอยู่ หรืออย่างน้อย 1 byte (ถ้า timeout > 0)
+
+                if bytes_to_read > 0:
+                    try:
+                        new_bytes = self.ser.read(bytes_to_read)
+                        if new_bytes:
+                            # self.data_queue.put({"log_direct": f"DEBUG_THREAD ({thread_name}): Read {len(new_bytes)} bytes: {new_bytes!r}"})
+                            self.read_buffer += new_bytes
+                        # else: # ser.read() timed out (if timeout > 0 and in_waiting was 0)
+                        # self.data_queue.put({"log_direct": f"DEBUG_THREAD ({thread_name}): ser.read() returned no bytes (timeout)."})
+                        # pass # ผ่านไปเฉยๆ ไม่ต้องทำอะไรถ้าอ่านไม่ได้
+
+                    except serial.SerialException as se_read_frag:
+                        self.data_queue.put(
+                            {"error": f"Serial Read Error in Fragment Read ({thread_name}): {se_read_frag}"})
+                        break  # ออกจาก loop ถ้ามีปัญหาการอ่าน
+
+                # --- ประมวลผล Buffer เพื่อหา Message ที่สมบูรณ์ ---
+                while True:  # Loop เพื่อดึง Message ทั้งหมดที่อาจจะมีใน Buffer
+                    stx_index = self.read_buffer.find(self.STX)
+                    if stx_index != -1:  # เจอ STX
+                        etx_index = self.read_buffer.find(self.ETX, stx_index + 1)  # หา ETX หลัง STX
+                        if etx_index != -1:  # เจอ ETX ด้วย
+                            # ได้ Message ที่สมบูรณ์ (ไม่รวม STX และ ETX)
+                            complete_message_bytes = self.read_buffer[stx_index + 1: etx_index]
+                            if complete_message_bytes:  # ตรวจสอบว่าไม่เป็น empty bytes (ไม่ควรเกิดถ้า STX/ETX ถูกต้อง)
+                                # --- Process the complete_message_bytes ---
+                                cleaned_text_for_display_and_parse = ""
+                                parsed_numeric_str = "N/A"  # Default ก่อน Parse
+                                try:
+                                    # Decode Message ที่สมบูรณ์
+                                    decoded_message = complete_message_bytes.decode('latin-1',
+                                                                                    errors='replace')  # หรือ 'ascii'
+                                    cleaned_text_for_display_and_parse = decoded_message.strip()
+
+                                    # Parse ข้อมูลที่ Clean แล้ว
+                                    parsed_numeric_str = self.parse_scale_data(cleaned_text_for_display_and_parse)
+
+                                except Exception as decode_parse_err:
+                                    self.data_queue.put({
+                                                            "error": f"Decode/Parse Error ({thread_name}): {decode_parse_err} | MsgBytes: {complete_message_bytes!r}"})
+                                    self.read_buffer = self.read_buffer[etx_index + 1:]  # สำคัญ: เคลียร์ส่วนที่มีปัญหา
+                                    continue  # ไปรอบถัดไปของ while True (หา message ใหม่)
+
+                                # --- สร้าง Payload ให้ถูกต้อง ---
+                                update_payload = {
+                                    "cleaned_data_for_live": cleaned_text_for_display_and_parse,
+                                    "parsed_numeric_str_for_live": parsed_numeric_str,
+                                    "cleaned_data_for_log": cleaned_text_for_display_and_parse,
+                                    "parsed_data_for_log": parsed_numeric_str
+                                }
+                                self.data_queue.put(update_payload)
+                                self.data_queue.put({
+                                                        "log_direct": f"DEBUG_THREAD ({thread_name}): Put DATA_PAYLOAD from complete message: {update_payload}"})  # <--- Log payload ที่ส่ง
+
+                                # ตัด Message ที่ประมวลผลแล้วออกจาก Buffer
+                            self.read_buffer = self.read_buffer[etx_index + 1:]
+
+                        else:  # เจอ STX แต่ยังไม่เจอ ETX
+                            # self.data_queue.put({"log_direct": f"DEBUG_THREAD ({thread_name}): Found STX, waiting for ETX. Buffer: {self.read_buffer[stx_index:]!r}"})
+                            # ข้อมูลยังไม่ครบ Message, เก็บ STX และข้อมูลที่ตามมาไว้ใน Buffer
+                            # แต่ถ้า Buffer ยาวเกินไปโดยไม่เจอ ETX นานๆ อาจจะต้องมีกลไกตัด Buffer ส่วนหน้าทิ้ง
+                            if len(self.read_buffer) > 2048:  # สมมติ Max buffer size
+                                self.data_queue.put({
+                                                        "log_direct": f"WARNING_THREAD ({thread_name}): Buffer too long, clearing from STX: {self.read_buffer[stx_index:stx_index + 20]}..."})
+                                self.read_buffer = self.read_buffer[stx_index:]  # เก็บตั้งแต่ STX ล่าสุด
+                            break  # ออกจาก while True, รอข้อมูลเพิ่มในรอบหน้าของ while self.is_reading
+
+                    else:  # ไม่เจอ STX ใน Buffer เลย
+                        # ถ้า Buffer มีข้อมูลแต่ไม่มี STX แสดงว่าอาจจะเป็นข้อมูลขยะ หรือส่วนท้ายของ message ที่ STX หายไป
+                        if len(self.read_buffer) > 0 and len(self.read_buffer) > 256:  # ถ้ามีข้อมูลขยะสะสมเยอะ
+                            self.data_queue.put({
+                                                    "log_direct": f"WARNING_THREAD ({thread_name}): No STX in buffer, clearing old data. Buffer: {self.read_buffer[:20]}..."})
+                            self.read_buffer = b''  # หรือเก็บไว้ส่วนหนึ่ง self.read_buffer = self.read_buffer[-128:]
+                        break  # ออกจาก while True, รอข้อมูลเพิ่ม
+
+                # --- จบส่วนประมวลผล Buffer ---
+
+                time.sleep(0.02)  # <--- ปรับ Sleep ให้น้อยลงได้ เพราะ ser.read() ไม่ block นาน
+
+            self.data_queue.put({"log_direct": f"DEBUG_THREAD ({thread_name}): Exited while loop."})
+        except Exception as e_thread_main:
+            self.data_queue.put({"error": f"UNHANDLED Thread Exc ({thread_name}): {e_thread_main}"})
+        finally:
+            self.data_queue.put({"log_direct": f"DEBUG_THREAD ({thread_name}): EXITING."})
+
+    def read_serial_dataxxxx(self):
         thread_name = threading.current_thread().name
         self.data_queue.put({"log_direct": f"DEBUG_THREAD ({thread_name}): ENTERING. is_reading: {self.is_reading}"})
         try:
@@ -335,52 +439,64 @@ class RS232TesterApp:
         # self.log_message(f"DEBUG_QUEUE_PROC: Called. Queue size: {self.data_queue.qsize()}")
         try:
             items_processed_this_cycle = 0
-            max_items_per_cycle = 10  # หรือ 5
+            max_items_per_cycle = 10
 
             while not self.data_queue.empty() and items_processed_this_cycle < max_items_per_cycle:
                 payload = None
                 try:
                     payload = self.data_queue.get_nowait()
+                    self.log_message(f"DEBUG_QUEUE_PROC: Got payload: {payload}")  # <--- Log payload ที่ดึงออกมา
+
                     if isinstance(payload, dict):
                         if "log_direct" in payload:
                             self.log_message(payload["log_direct"])
-                        elif "error" in payload:  # <--- ใช้ elif เพื่อให้แน่ใจว่าประมวลผลทีละประเภท
+
+                        elif "error" in payload:
                             error_msg = payload["error"]
                             self.log_message(f"ERROR_FROM_THREAD: {error_msg}")
                             if "Serial Read Error" in error_msg or "UNHANDLED Thread Exc" in error_msg or "Thread Execution Error" in error_msg:
                                 self.log_message("DEBUG_QUEUE_PROC: Critical error from thread, stopping.")
                                 self.stop_reading()
-                                break  # ออกจาก while loop ของการประมวลผล queue
+                                break
+
+                                # --- ตรวจสอบว่า payload เป็น data payload ที่มี key ที่เราต้องการ ---
                         elif "cleaned_data_for_live" in payload and "parsed_numeric_str_for_live" in payload:
+                            cleaned_live_data = payload.get("cleaned_data_for_live")
                             parsed_numeric_live_data = payload.get("parsed_numeric_str_for_live")
 
                             cleaned_log_data = payload.get("cleaned_data_for_log")
                             parsed_log_data = payload.get("parsed_data_for_log")
 
+                            self.log_message(
+                                f"DEBUG_QUEUE_PROC: Processing Data - Cleaned: '{cleaned_live_data}', Parsed: '{parsed_numeric_live_data}'")  # <--- Log ค่าที่จะใช้
+
                             # --- อัปเดต Live Weight Label ---
-                            if parsed_numeric_live_data not in ["N/A", None] and "Error" not in parsed_numeric_live_data:
+                            if parsed_numeric_live_data not in ["N/A",
+                                                                None] and "Error" not in parsed_numeric_live_data:
                                 self.update_live_weight_label(parsed_numeric_live_data)
+                                # else: # ถ้า Parsed เป็น N/A หรือ Error, ไม่ต้องทำอะไรกับ Live Weight Label (คงค่าเดิม)
+                                # self.log_message(f"DEBUG_QUEUE_PROC: Parsed value is '{parsed_numeric_live_data}', Live Weight not updated from parsed.")
+                                pass  # คงค่าเดิม
 
                             # --- Log Cleaned และ Parsed Data ไปยัง Log Area ---
-                            if cleaned_log_data is not None:
-                                self.log_message(f"Cleaned Raw: '{cleaned_log_data}'")
-                            if parsed_log_data is not None:
-                                self.log_message(f"Parsed Value: '{parsed_log_data}'")
+                            if cleaned_log_data is not None:  # ควรจะเปลี่ยนเป็น cleaned_data_for_log
+                                self.log_message(f"Cleaned Raw (for log): '{cleaned_log_data}'")
+                            if parsed_log_data is not None:  # ควรจะเปลี่ยนเป็น parsed_data_for_log
+                                self.log_message(f"Parsed Value (for log): '{parsed_log_data}'")
 
-                        # else: # กรณี payload เป็น dict แต่ไม่ใช่ type ที่รู้จัก (ไม่ควรเกิด)
-                        # self.log_message(f"DEBUG_QUEUE_PROC: Unknown dict payload: {payload}")
+                        else:
+                            self.log_message(f"DEBUG_QUEUE_PROC: Unknown dict payload structure: {payload}")
 
-                    # else: # กรณี payload ไม่ใช่ dict เลย (เช่นถ้าเราเคยใส่ None เพื่อ signal thread end)
-                    # self.log_message(f"DEBUG_QUEUE_PROC: Received non-dict payload: {payload}")
+                    else:
+                        self.log_message(f"DEBUG_QUEUE_PROC: Received non-dict payload: {payload}")
 
                     items_processed_this_cycle += 1
 
                 except queue.Empty:
                     break
 
-                except Exception as e_proc_item:  # Error ขณะประมวลผล item หนึ่งๆ
-                    self.log_message(
-                        f"DEBUG_QUEUE_PROC_ITEM_ERROR: {e_proc_item} with payload: {payload}")  # Log error พร้อม payload
+                except Exception as e_proc_item:
+                    self.log_message(f"DEBUG_QUEUE_PROC_ITEM_ERROR: {e_proc_item} with payload: {payload}")
 
         except Exception as e_outer_proc:
             self.log_message(f"DEBUG_QUEUE_PROC_OUTER_ERROR: {e_outer_proc}")
