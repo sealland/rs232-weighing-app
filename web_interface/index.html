@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>อ่านค่าน้ำหนัก RS232</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin-top: 50px; }
+        #weightDisplay { font-size: 3em; margin-bottom: 20px; padding: 10px 20px; border: 1px solid #ccc; min-width: 200px; text-align: center; }
+        button { font-size: 1.2em; padding: 10px 20px; cursor: pointer; }
+        #status { margin-top: 15px; font-style: italic; color: #555; }
+    </style>
+</head>
+<body>
+    <h1>ค่าน้ำหนักจากเครื่องชั่ง</h1>
+    <div id="weightDisplay">---</div>
+    <button id="getWeightButton">อ่านค่าน้ำหนัก</button>
+    <div id="status"></div>
+
+    <script>
+        const weightDisplay = document.getElementById('weightDisplay');
+        const getWeightButton = document.getElementById('getWeightButton');
+        const statusDiv = document.getElementById('status');
+
+        // URL ของ Agent (ต้องตรงกับที่ Agent ทำงานอยู่)
+        const agentUrl = 'http://127.0.0.1:5000/get_weight'; // หรือ IP ของเครื่องที่รัน Agent
+
+        async function fetchWeight() {
+            statusDiv.textContent = 'กำลังอ่านข้อมูล...';
+            try {
+                const response = await fetch(agentUrl);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json(); // Agent เราส่ง JSON กลับมา
+                weightDisplay.textContent = data.weight;
+                statusDiv.textContent = 'อัปเดตล่าสุด: ' + new Date().toLocaleTimeString();
+            } catch (error) {
+                console.error('Error fetching weight:', error);
+                weightDisplay.textContent = 'Error';
+                statusDiv.textContent = 'ไม่สามารถเชื่อมต่อ Agent ได้: ' + error.message;
+            }
+        }
+
+        getWeightButton.addEventListener('click', fetchWeight);
+
+        // เรียกครั้งแรกเมื่อโหลดหน้าเว็บ (ถ้าต้องการ)
+        // fetchWeight();
+
+        // หรือตั้งเวลาให้อ่านอัตโนมัติ (ถ้าต้องการ)
+        // setInterval(fetchWeight, 3000); // อ่านทุก 3 วินาที
+    </script>
+</body>
+</html>
