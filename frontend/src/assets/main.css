@@ -1,0 +1,10 @@
+/* src/assets/main.css */
+html, body, #app {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    height: 100%;
+    overflow: hidden; /* ป้องกัน scrollbar ที่ body */
+    background-color: #f0f2f5; /* ย้ายสีพื้นหลังมาไว้ที่นี่ */
+    font-family: sans-serif;
+  }
