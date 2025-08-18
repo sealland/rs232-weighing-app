@@ -3,52 +3,120 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>อ่านค่าน้ำหนัก RS232</title>
+    <title>อ่านค่าน้ำหนัก Real-time จาก Agent</title>
     <style>
-        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin-top: 50px; }
-        #weightDisplay { font-size: 3em; margin-bottom: 20px; padding: 10px 20px; border: 1px solid #ccc; min-width: 200px; text-align: center; }
-        button { font-size: 1.2em; padding: 10px 20px; cursor: pointer; }
-        #status { margin-top: 15px; font-style: italic; color: #555; }
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin-top: 50px; background-color: #f4f4f4; }
+        #main-container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 0 15px rgba(0,0,0,0.1); text-align: center; }
+        h1 { color: #333; }
+        #weightDisplayContainer { margin-bottom: 25px; }
+        #weightLabel { font-size: 1.5em; color: #555; margin-bottom: 5px; }
+        #weightValue { 
+            font-size: 4em; 
+            font-weight: bold; 
+            color: #007bff; 
+            padding: 10px 20px; 
+            border: 2px solid #007bff; 
+            border-radius: 5px; 
+            min-width: 250px; 
+            display: inline-block;
+            background-color: #e7f3ff;
+        }
+        #status { margin-top: 20px; font-style: italic; color: #777; height: 20px; }
+        .config-note { font-size: 0.9em; color: #666; margin-top: 30px; max-width: 500px;}
+        .error-message { color: red; font-weight: bold;}
     </style>
 </head>
 <body>
-    <h1>ค่าน้ำหนักจากเครื่องชั่ง</h1>
-    <div id="weightDisplay">---</div>
-    <button id="getWeightButton">อ่านค่าน้ำหนัก</button>
-    <div id="status"></div>
+    <div id="main-container">
+        <h1>ค่าน้ำหนักจากเครื่องชั่ง (Real-time)</h1>
+        
+        <div id="weightDisplayContainer">
+            <div id="weightLabel">น้ำหนักปัจจุบัน:</div>
+            <div id="weightValue">---</div>
+        </div>
+        
+        <div id="status">กำลังเชื่อมต่อกับ Agent...</div>
+
+        <div class="config-note">
+            <strong>หมายเหตุ:</strong> หน้านี้จะพยายามดึงข้อมูลน้ำหนักจาก Agent ทุกๆ <span id="intervalValue">2</span> วินาที
+            ตรวจสอบให้แน่ใจว่า RS232 Agent (<code>RS232Agent.exe</code> หรือ <code>agent.py</code>) กำลังทำงานอยู่
+            และสามารถเข้าถึงได้ที่ <code id="agentUrlDisplay"></code>.
+        </div>
+    </div>
 
     <script>
-        const weightDisplay = document.getElementById('weightDisplay');
-        const getWeightButton = document.getElementById('getWeightButton');
-        const statusDiv = document.getElementById('status');
+        const weightValueElement = document.getElementById('weightValue');
+        const statusElement = document.getElementById('status');
+        const agentUrlDisplayElement = document.getElementById('agentUrlDisplay');
+        const intervalValueElement = document.getElementById('intervalValue');
 
-        // URL ของ Agent (ต้องตรงกับที่ Agent ทำงานอยู่)
-        const agentUrl = 'http://127.0.0.1:5000/get_weight'; // หรือ IP ของเครื่องที่รัน Agent
+        // --- Configuration ---
+        // !!! สำคัญ: แก้ไข IP Address นี้ให้เป็น IP ของเครื่องที่รัน Agent !!!
+        // ถ้า Agent รันบนเครื่องเดียวกับที่เปิดหน้านี้ ใช้ '127.0.0.1' หรือ 'localhost'
+        // ถ้า Agent รันบนเครื่องอื่นในเครือข่าย ให้ใช้ IP ของเครื่องนั้น เช่น '192.168.1.100'
+        const agentIpAddress = '127.0.0.1'; // <--- ***** แก้ไข IP ตรงนี้ *****
+        const agentPort = 5000;
+        const agentEndpoint = '/get_weight';
+        const agentUrl = `http://${agentIpAddress}:${agentPort}${agentEndpoint}`;
+        
+        const fetchIntervalMilliseconds = 500; // ดึงข้อมูลทุกๆ 2 วินาที (2000 ms)
+        // ---------------------
 
-        async function fetchWeight() {
-            statusDiv.textContent = 'กำลังอ่านข้อมูล...';
+        agentUrlDisplayElement.textContent = agentUrl;
+        intervalValueElement.textContent = fetchIntervalMilliseconds / 1000;
+
+        let fetchIntervalId = null; // เก็บ ID ของ setInterval
+
+        async function fetchWeightFromAgent() {
+            statusElement.textContent = 'กำลังดึงข้อมูลน้ำหนัก...';
+            statusElement.classList.remove('error-message');
+
             try {
-                const response = await fetch(agentUrl);
+                const response = await fetch(agentUrl, {
+                    method: 'GET',
+                    cache: 'no-cache', // ป้องกันการ cache ผลลัพธ์
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    // ถ้า HTTP status ไม่ใช่ 2xx (เช่น 404, 500)
+                    throw new Error(`HTTP error! status: ${response.status} - ${response.statusText}`);
                 }
-                const data = await response.json(); // Agent เราส่ง JSON กลับมา
-                weightDisplay.textContent = data.weight;
-                statusDiv.textContent = 'อัปเดตล่าสุด: ' + new Date().toLocaleTimeString();
+
+                const data = await response.json(); // Agent เราส่ง JSON กลับมา: {"weight": "ค่า"}
+                
+                if (data && typeof data.weight !== 'undefined') {
+                    weightValueElement.textContent = data.weight; // แสดงค่าที่ได้จาก Agent
+                    statusElement.textContent = 'อัปเดตล่าสุด: ' + new Date().toLocaleTimeString();
+                } else {
+                    throw new Error('รูปแบบข้อมูลไม่ถูกต้อง หรือไม่พบค่าน้ำหนัก');
+                }
+
             } catch (error) {
-                console.error('Error fetching weight:', error);
-                weightDisplay.textContent = 'Error';
-                statusDiv.textContent = 'ไม่สามารถเชื่อมต่อ Agent ได้: ' + error.message;
+                console.error('Error fetching weight from agent:', error);
+                weightValueElement.textContent = 'Error';
+                statusElement.textContent = 'ผิดพลาด: ' + error.message;
+                statusElement.classList.add('error-message');
+                // อาจจะพิจารณาหยุดการดึงข้อมูลถ้า Error ติดต่อกันนานๆ
+                // clearInterval(fetchIntervalId);
             }
         }
 
-        getWeightButton.addEventListener('click', fetchWeight);
+        // เริ่มดึงข้อมูลครั้งแรกเมื่อโหลดหน้า
+        fetchWeightFromAgent();
 
-        // เรียกครั้งแรกเมื่อโหลดหน้าเว็บ (ถ้าต้องการ)
-        // fetchWeight();
+        // ตั้งค่าให้ดึงข้อมูลเป็นระยะๆ
+        fetchIntervalId = setInterval(fetchWeightFromAgent, fetchIntervalMilliseconds);
 
-        // หรือตั้งเวลาให้อ่านอัตโนมัติ (ถ้าต้องการ)
-        // setInterval(fetchWeight, 3000); // อ่านทุก 3 วินาที
+        // (Optional) ถ้าต้องการหยุดการดึงข้อมูลเมื่อปิดหน้าต่างหรือ Tab
+        // window.addEventListener('beforeunload', () => {
+        //     if (fetchIntervalId) {
+        //         clearInterval(fetchIntervalId);
+        //     }
+        // });
+
     </script>
 </body>
 </html>

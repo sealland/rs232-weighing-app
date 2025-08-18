@@ -1,6 +1,6 @@
 # agent.py
 from flask import Flask, jsonify
-# from flask_cors import CORS # Uncomment if you need CORS
+from flask_cors import CORS # Uncomment if you need CORS
 import serial
 import time
 import random  # For simulated data if needed
@@ -260,9 +260,7 @@ def read_weight_from_rs232_agent():
 
 # --- Flask App ---
 app = Flask(__name__)
-
-
-# CORS(app) # Uncomment if needed
+CORS(app)
 
 @app.route('/get_weight', methods=['GET'])
 def get_weight_endpoint():
