@@ -1,11 +1,18 @@
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, List
 
 # Schema พื้นฐานที่มีข้อมูลร่วมกัน
 class WeightTicketBase(BaseModel):
     WE_LICENSE: str
     WE_WEIGHTIN: float
+
+class WeightTicketCreate(BaseModel):
+    WE_LICENSE: str
+    WE_WEIGHTIN: float
+
+class WeightTicketUpdateWeighOut(BaseModel):
+    WE_WEIGHTOUT: float
 
 # Schema สำหรับการสร้างข้อมูล (อาจจะไม่ต้องใช้ตอนนี้)
 class WeightTicketCreate(WeightTicketBase):
@@ -14,6 +21,7 @@ class WeightTicketCreate(WeightTicketBase):
 # Schema สำหรับการอ่านข้อมูลจากฐานข้อมูลมาแสดงผล
 class WeightTicket(WeightTicketBase):
     WE_ID: str
+    WE_DATE: Optional[date] = None
     WE_TIMEIN: datetime
     WE_TIMEOUT: Optional[datetime] = None
     WE_WEIGHTOUT: Optional[float] = None

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, DateTime, ForeignKey
+from sqlalchemy import Column, String, Float, DateTime, ForeignKey, Date
 from sqlalchemy.orm import relationship 
 from database import Base
 
@@ -6,6 +6,8 @@ class WeightTicket(Base):
     __tablename__ = 'TBL_WEIGHT'
     
     WE_ID = Column(String, primary_key=True, index=True)
+    WE_TYPE = Column(String, nullable=False) # nullable=False เพราะห้ามเป็นค่าว่าง
+    WE_DATE = Column(Date, nullable=False) # ใช้ Date Type และห้ามเป็นค่าว่าง
     WE_LICENSE = Column(String)
     WE_TIMEIN = Column(DateTime)
     WE_TIMEOUT = Column(DateTime, nullable=True)

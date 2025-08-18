@@ -33,6 +33,15 @@ def get_db():
     finally:
         db.close()
 
+# ควรวางไว้ก่อน Endpoint ที่มี Path Parameter เพื่อความเป็นระเบียบ
+@app.post("/api/tickets/", response_model=schemas.WeightTicket)
+def create_new_ticket(ticket: schemas.WeightTicketCreate, db: Session = Depends(get_db)):
+    """
+    API Endpoint สำหรับสร้างบัตรชั่งใหม่
+    """
+    return crud.create_ticket(db=db, ticket=ticket)
+
+
 @app.get("/api/tickets/", response_model=List[schemas.WeightTicket])
 def read_open_tickets(db: Session = Depends(get_db)):
     """
@@ -54,6 +63,22 @@ def read_completed_tickets(target_date: date | None = None, db: Session = Depend
         
     tickets = crud.get_completed_tickets_by_date(db, target_date=target_date)
     return tickets
+
+# --- เพิ่ม Endpoint ใหม่สำหรับอัปเดต (ชั่งออก) ---
+@app.patch("/api/tickets/{ticket_id}/weigh-out", response_model=schemas.WeightTicket)
+def update_ticket_weigh_out(
+    ticket_id: str, 
+    weigh_out_data: schemas.WeightTicketUpdateWeighOut, 
+    db: Session = Depends(get_db)
+):
+    """
+    API Endpoint สำหรับบันทึกน้ำหนักชั่งออก
+    """
+    updated_ticket = crud.update_weigh_out(db, ticket_id=ticket_id, weigh_out_data=weigh_out_data)
+    if updated_ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return updated_ticket
+# -----------------------------------------
 
 # --- API Endpoint ใหม่สำหรับดึงข้อมูลใบเดียว ---
 @app.get("/api/tickets/{ticket_id}", response_model=schemas.WeightTicketDetails)

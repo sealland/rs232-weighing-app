@@ -16,6 +16,11 @@ const activeTab = ref('inProgress')
 const selectedTicket = ref(null)      // <-- 2. เพิ่ม state สำหรับเก็บข้อมูลบัตรที่ถูกเลือก
 const isModalVisible = ref(false)     // <-- 3. เพิ่ม state สำหรับควบคุมการแสดงผล Modal
 
+const newTicketLicense = ref('') // เก็บค่าทะเบียนรถที่กรอก
+const isCreatingTicket = ref(false) // ใช้สำหรับแสดงสถานะ loading ตอนกดบันทึก
+const isUpdatingTicket = ref(false)
+
+
 const API_BASE_URL = 'http://localhost:8000'
 
 // --- WebSocket Configuration ---
@@ -130,10 +135,100 @@ onMounted(() => {
   fetchCompletedTickets()
   connectWebSocket()
 })
+
+// --- เพิ่มฟังก์ชันใหม่สำหรับสร้างบัตรชั่ง ---
+async function handleCreateTicket() {
+  // ตรวจสอบข้อมูลเบื้องต้น
+  if (!newTicketLicense.value.trim()) {
+    alert('กรุณากรอกทะเบียนรถ');
+    return;
+  }
+  
+  // แปลงค่าน้ำหนักปัจจุบันกลับเป็นตัวเลข (เอา comma ออก)
+  const weightValue = parseInt(currentWeight.value.replace(/,/g, ''), 10);
+  if (isNaN(weightValue)) {
+     alert('ค่าน้ำหนักไม่ถูกต้อง');
+     return;
+  }
+
+  isCreatingTicket.value = true; // เริ่มสถานะ loading
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/tickets/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        WE_LICENSE: newTicketLicense.value,
+        WE_WEIGHTIN: weightValue,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Server responded with an error!');
+    }
+
+    // เมื่อสร้างสำเร็จ
+    alert('สร้างบัตรชั่งใหม่สำเร็จ!');
+    newTicketLicense.value = ''; // ล้างค่าในฟอร์ม
+    await fetchOpenTickets(); // โหลดข้อมูลตารางใหม่เพื่อให้เห็นบัตรล่าสุด
+    
+  } catch (error) {
+    console.error('Failed to create ticket:', error);
+    alert('เกิดข้อผิดพลาดในการสร้างบัตรชั่ง');
+  } finally {
+    isCreatingTicket.value = false; // สิ้นสุดสถานะ loading
+  }
+}
+async function handleWeighOut() {
+  if (!selectedTicket.value) return;
+
+  // แปลงค่าน้ำหนักปัจจุบันกลับเป็นตัวเลข
+  const weightOutValue = parseInt(currentWeight.value.replace(/,/g, ''), 10);
+  if (isNaN(weightOutValue)) {
+     alert('ค่าน้ำหนักปัจจุบันไม่ถูกต้อง');
+     return;
+  }
+
+  isUpdatingTicket.value = true; // เริ่มสถานะ loading
+  const ticketId = selectedTicket.value.WE_ID;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}/weigh-out`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        WE_WEIGHTOUT: weightOutValue,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Server responded with an error during weigh-out!');
+    }
+
+    alert('บันทึกน้ำหนักชั่งออกสำเร็จ!');
+    closeModal(); // ปิด Modal หลังจากสำเร็จ
+
+    // โหลดข้อมูลทั้งสองตารางใหม่ เพื่อให้บัตรย้ายจาก "กำลังดำเนินการ" -> "เสร็จสิ้นแล้ว"
+    // ใช้ Promise.all เพื่อให้โหลดพร้อมกัน
+    await Promise.all([
+      fetchOpenTickets(),
+      fetchCompletedTickets()
+    ]);
+
+  } catch (error) {
+    console.error('Failed to update weigh-out:', error);
+    alert('เกิดข้อผิดพลาดในการบันทึกน้ำหนักชั่งออก');
+  } finally {
+    isUpdatingTicket.value = false; // สิ้นสุดสถานะ loading
+  }
+}
 </script>
 
 <template>
-  <!-- ... (ส่วน header เหมือนเดิม) ... -->
   <header>
     <h1>ระบบชั่งน้ำหนัก</h1>
     <div class="status-bar">
@@ -142,16 +237,42 @@ onMounted(() => {
   </header>
 
   <main>
-    <!-- ... (ส่วน weight-display-container เหมือนเดิม) ... -->
-    <div class="weight-display-container">
-      <h2>น้ำหนักปัจจุบัน</h2>
-      <div class="weight-display">
-        <span>{{ currentWeight }}</span>
+    <div class="left-panel">
+      <!-- ส่วนแสดงน้ำหนัก Real-time -->
+      <div class="weight-display-container card">
+        <h2>น้ำหนักปัจจุบัน</h2>
+        <div class="weight-display">
+          <span>{{ currentWeight }}</span>
+        </div>
+      </div>
+      
+      <!-- ฟอร์มสร้างบัตรชั่งใหม่ -->
+      <div class="create-ticket-form card">
+        <h2>สร้างบัตรชั่งใหม่ / ชั่งเข้า</h2>
+        <form @submit.prevent="handleCreateTicket">
+          <div class="form-group">
+            <label for="license-plate">ทะเบียนรถ</label>
+            <input 
+              id="license-plate"
+              type="text" 
+              v-model="newTicketLicense"
+              placeholder="กรอกทะเบียนรถ..."
+              required
+            >
+          </div>
+          <div class="form-group">
+            <label>น้ำหนักชั่งเข้า (จากตาชั่ง)</label>
+            <div class="weight-preview">{{ currentWeight }} กก.</div>
+          </div>
+          <button type="submit" :disabled="isCreatingTicket">
+            {{ isCreatingTicket ? 'กำลังบันทึก...' : 'บันทึกการชั่งเข้า' }}
+          </button>
+        </form>
       </div>
     </div>
 
-    <div class="tickets-container">
-      <!-- 6. เพิ่มส่วนของ Tabs -->
+    <div class="right-panel card">
+      <!-- Tabs สำหรับสลับมุมมอง -->
       <div class="tabs">
         <button :class="{ active: activeTab === 'inProgress' }" @click="activeTab = 'inProgress'">
           กำลังดำเนินการ ({{ openTickets.length }})
@@ -161,9 +282,10 @@ onMounted(() => {
         </button>
       </div>
 
+      <!-- แสดงข้อความ Error ถ้ามี -->
       <div v-if="apiError" class="error-message">{{ apiError }}</div>
 
-      <!-- 7. แสดงตารางตาม activeTab ที่ถูกเลือก -->
+      <!-- ส่วนแสดงตารางตาม activeTab ที่ถูกเลือก -->
       <div v-else>
         <!-- ตารางสำหรับบัตรกำลังดำเนินการ -->
         <div v-show="activeTab === 'inProgress'">
@@ -183,7 +305,7 @@ onMounted(() => {
                 <td>{{ new Date(ticket.WE_TIMEIN).toLocaleString('th-TH') }}</td>
                 <td>{{ ticket.WE_WEIGHTIN.toLocaleString('en-US') }}</td>
               </tr>
-              <tr v-if="openTickets.length === 0">
+              <tr v-if="!apiError && openTickets.length === 0">
                 <td colspan="4" style="text-align: center;">ไม่พบรายการ</td>
               </tr>
             </tbody>
@@ -206,10 +328,9 @@ onMounted(() => {
                 <td>{{ ticket.WE_ID }}</td>
                 <td>{{ ticket.WE_LICENSE }}</td>
                 <td>{{ new Date(ticket.WE_TIMEOUT).toLocaleString('th-TH') }}</td>
-                <!-- คำนวณน้ำหนักสุทธิ์ -->
-                <td>{{ Math.abs(ticket.WE_WEIGHTIN - ticket.WE_WEIGHTOUT).toLocaleString('en-US') }}</td>
+                <td>{{ ticket.WE_WEIGHTNET?.toLocaleString('en-US') || '0' }}</td>
               </tr>
-              <tr v-if="completedTickets.length === 0">
+              <tr v-if="!apiError && completedTickets.length === 0">
                 <td colspan="4" style="text-align: center;">ไม่พบรายการของวันนี้</td>
               </tr>
             </tbody>
@@ -218,16 +339,19 @@ onMounted(() => {
       </div>
     </div>
   </main>
-  <!-- 7. นำ Modal Component มาใช้งาน -->
+  
+  <!-- Modal Component สำหรับแสดงรายละเอียด -->
   <TicketDetailModal 
     :visible="isModalVisible" 
     :ticket="selectedTicket"
     @close="closeModal"
+    @weigh-out="handleWeighOut"
   />
 </template>
 
 <style scoped>
 /* ส่วนของ CSS เหมือนเดิม แต่เพิ่ม style สำหรับ status bar และ error message */
+
 :root {
   --primary-color: #42b883;
   --secondary-color: #35495e;
@@ -238,7 +362,80 @@ onMounted(() => {
   --connected-color: #43a047;
   --connecting-color: #f9a825;
 }
+main {
+  display: flex;
+  gap: 2rem;
+  align-items: flex-start;
+}
+.left-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  width: 380px; /* กำหนดความกว้างคงที่ */
+  flex-shrink: 0;
+}
+.right-panel {
+  flex-grow: 1; /* ให้ตารางยืดขยายเต็มพื้นที่ที่เหลือ */
+}
 
+/* ใช้ card style ร่วมกับ tickets-container เดิม */
+.card {
+  background-color: var(--card-bg);
+  padding: 2rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+/* CSS สำหรับฟอร์มใหม่ */
+.create-ticket-form h2 {
+  margin-top: 0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 1rem;
+  margin-bottom: 1.5rem;
+}
+.form-group {
+  margin-bottom: 1.5rem;
+}
+.form-group label {
+  display: block;
+  font-weight: bold;
+  margin-bottom: 0.5rem;
+}
+.form-group input {
+  width: 100%;
+  padding: 0.8rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+.weight-preview {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: var(--primary-color);
+  background-color: #f0f2f5;
+  padding: 0.8rem;
+  border-radius: 4px;
+  text-align: right;
+}
+button[type="submit"] {
+  width: 100%;
+  padding: 1rem;
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1.1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+button[type="submit"]:hover {
+  background-color: #36a474;
+}
+button[type="submit"]:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
 body {
   background-color: var(--bg-color);
   color: var(--text-color);

@@ -15,7 +15,7 @@ const props = defineProps({
 
 // กำหนด event ที่ Component นี้จะส่งกลับไปหาแม่
 // 'close' คือ event ที่จะถูกส่งออกไปเมื่อผู้ใช้กดปิด
-const emit = defineEmits(['close']);
+const emit = defineEmits(['close', 'weigh-out']);
 
 
 </script>
@@ -98,6 +98,17 @@ const emit = defineEmits(['close']);
         <div v-else class="loading">
           กำลังโหลดข้อมูล...
         </div>
+<!-- เพิ่มส่วน Footer และปุ่มชั่งออก -->
+      <div class="modal-footer" v-if="ticket">
+          <!-- ปุ่มจะแสดงก็ต่อเมื่อบัตรยังไม่มีน้ำหนักชั่งออก -->
+          <button 
+            v-if="!ticket.WE_WEIGHTOUT" 
+            class="weigh-out-button"
+            @click="emit('weigh-out')"
+          >
+            บันทึกน้ำหนักชั่งออก
+          </button>
+        </div>
       </div>
     </div>
   </template>
@@ -169,6 +180,29 @@ const emit = defineEmits(['close']);
   overflow-y: auto;
   border: 1px solid #ddd;
   border-radius: 4px;
+}
+.modal-footer {
+  border-top: 1px solid #eee;
+  padding-top: 1.5rem;
+  margin-top: 1.5rem;
+  display: flex;
+  justify-content: flex-end; /* จัดปุ่มไปทางขวา */
+}
+
+.weigh-out-button {
+  padding: 0.8rem 1.5rem;
+  background-color: #f44336; /* สีแดง */
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.weigh-out-button:hover {
+  background-color: #d32f2f;
 }
 table {
   width: 100%;
