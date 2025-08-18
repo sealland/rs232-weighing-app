@@ -1,0 +1,360 @@
+<script setup>
+import TicketDetailModal from './components/TicketDetailModal.vue'
+import { ref, onMounted, computed } from 'vue' 
+
+// --- State Management ---
+// สร้างตัวแปรแบบ reactive เพื่อให้หน้าเว็บอัปเดตตามเมื่อค่าเปลี่ยน
+const currentWeight = ref('0') // สำหรับเก็บน้ำหนักปัจจุบัน
+const openTickets = ref([])     // สำหรับเก็บรายการบัตรชั่ง
+const apiError = ref(null)      // สำหรับเก็บข้อความ error จาก API
+const wsStatus = ref('Connecting...') // สำหรับสถานะ WebSocket
+const completedTickets = ref([]) 
+const activeTab = ref('inProgress') 
+
+// --- API Configuration ---
+// URL ของ Backend API ที่เรารันไว้ (http://127.0.0.1:8000)
+const selectedTicket = ref(null)      // <-- 2. เพิ่ม state สำหรับเก็บข้อมูลบัตรที่ถูกเลือก
+const isModalVisible = ref(false)     // <-- 3. เพิ่ม state สำหรับควบคุมการแสดงผล Modal
+
+const API_BASE_URL = 'http://localhost:8000'
+
+// --- WebSocket Configuration ---
+// URL ของ Agent ที่เรารันไว้ (ws://127.0.0.1:8765)
+const WEBSOCKET_URL = 'ws://localhost:8765'
+
+// --- Functions ---
+
+/**
+ * ฟังก์ชันสำหรับดึงข้อมูลบัตรชั่งที่ยังไม่เสร็จจาก Backend API
+ */
+
+ // สร้างวันที่ของวันนี้ในรูปแบบ YYYY-MM-DD
+const todayDateString = computed(() => {
+  const today = new Date();
+  return today.toISOString().split('T')[0];
+});
+
+async function fetchOpenTickets() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/tickets/`)
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    const data = await response.json()
+    openTickets.value = data // นำข้อมูลที่ได้ไปใส่ในตัวแปร openTickets
+    apiError.value = null // เคลียร์ error ถ้าสำเร็จ
+  } catch (error) {
+    console.error("Could not fetch tickets:", error)
+    apiError.value = "ไม่สามารถดึงข้อมูลบัตรชั่งได้ กรุณาตรวจสอบ Backend API"
+  }
+}
+
+async function fetchCompletedTickets() {
+  try {
+    // เรียก API ใหม่โดยใช้วันที่ของวันนี้
+    const response = await fetch(`${API_BASE_URL}/api/tickets/completed?target_date=${todayDateString.value}`)
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+    completedTickets.value = await response.json()
+  } catch (error) {
+    console.error("Could not fetch completed tickets:", error)
+    apiError.value = "ไม่สามารถดึงข้อมูลบัตรชั่ง 'เสร็จสิ้นแล้ว' ได้"
+  }
+}
+
+async function showTicketDetails(ticket_id) {
+  isModalVisible.value = true // เปิด Modal ทันที (จะแสดง Loading...)
+  selectedTicket.value = null // เคลียร์ข้อมูลเก่า
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticket_id}`)
+    if (!response.ok) {
+      throw new Error(`Ticket not found or API error: ${response.status}`)
+    }
+    selectedTicket.value = await response.json() // นำข้อมูลที่ได้มาใส่ใน state
+  } catch (error) {
+    console.error("Failed to fetch ticket details:", error)
+    alert("ไม่สามารถดึงข้อมูลรายละเอียดได้")
+    isModalVisible.value = false // ปิด Modal ถ้าเกิด Error
+  }
+}
+
+// 5. เพิ่มฟังก์ชันสำหรับปิด Modal
+function closeModal() {
+  isModalVisible.value = false
+  selectedTicket.value = null
+}
+
+
+
+/**
+ * ฟังก์ชันสำหรับเชื่อมต่อ WebSocket
+ */
+function connectWebSocket() {
+  const ws = new WebSocket(WEBSOCKET_URL)
+
+  ws.onopen = () => {
+    console.log("WebSocket connected.")
+    wsStatus.value = "Connected"
+  }
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      if (data.hasOwnProperty('weight')) {
+        // จัดรูปแบบตัวเลขให้มี comma
+        currentWeight.value = parseInt(data.weight).toLocaleString('en-US')
+      }
+    } catch (e) {
+      console.error("Error parsing WebSocket message:", e)
+    }
+  }
+
+  ws.onclose = () => {
+    console.log("WebSocket disconnected. Reconnecting...")
+    wsStatus.value = "Disconnected. Retrying..."
+    // พยายามเชื่อมต่อใหม่ทุกๆ 3 วินาที
+    setTimeout(connectWebSocket, 3000)
+  }
+
+  ws.onerror = (error) => {
+    console.error("WebSocket error:", error)
+    wsStatus.value = "Connection Error"
+    ws.close() // การปิดจะทำให้ onclose ทำงานและพยายามเชื่อมต่อใหม่
+  }
+}
+
+// --- Lifecycle Hook ---
+// onMounted คือฟังก์ชันที่จะถูกเรียกใช้งานแค่ 1 ครั้ง
+// หลังจากที่หน้าเว็บถูกสร้างขึ้นมาเสร็จสมบูรณ์
+onMounted(() => {
+  fetchOpenTickets()
+  fetchCompletedTickets()
+  connectWebSocket()
+})
+</script>
+
+<template>
+  <!-- ... (ส่วน header เหมือนเดิม) ... -->
+  <header>
+    <h1>ระบบชั่งน้ำหนัก</h1>
+    <div class="status-bar">
+      สถานะ WebSocket: <span :class="wsStatus.toLowerCase().replace(/\s/g, '-')">{{ wsStatus }}</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- ... (ส่วน weight-display-container เหมือนเดิม) ... -->
+    <div class="weight-display-container">
+      <h2>น้ำหนักปัจจุบัน</h2>
+      <div class="weight-display">
+        <span>{{ currentWeight }}</span>
+      </div>
+    </div>
+
+    <div class="tickets-container">
+      <!-- 6. เพิ่มส่วนของ Tabs -->
+      <div class="tabs">
+        <button :class="{ active: activeTab === 'inProgress' }" @click="activeTab = 'inProgress'">
+          กำลังดำเนินการ ({{ openTickets.length }})
+        </button>
+        <button :class="{ active: activeTab === 'completed' }" @click="activeTab = 'completed'">
+          เสร็จสิ้นแล้ว ({{ completedTickets.length }})
+        </button>
+      </div>
+
+      <div v-if="apiError" class="error-message">{{ apiError }}</div>
+
+      <!-- 7. แสดงตารางตาม activeTab ที่ถูกเลือก -->
+      <div v-else>
+        <!-- ตารางสำหรับบัตรกำลังดำเนินการ -->
+        <div v-show="activeTab === 'inProgress'">
+          <table>
+            <thead>
+              <tr>
+                <th>เลขที่บัตร</th>
+                <th>ทะเบียนรถ</th>
+                <th>เวลาชั่งเข้า</th>
+                <th>น้ำหนักชั่งเข้า (กก.)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="ticket in openTickets" :key="ticket.WE_ID" @click="showTicketDetails(ticket.WE_ID)" class="clickable-row">
+                <td>{{ ticket.WE_ID }}</td>
+                <td>{{ ticket.WE_LICENSE }}</td>
+                <td>{{ new Date(ticket.WE_TIMEIN).toLocaleString('th-TH') }}</td>
+                <td>{{ ticket.WE_WEIGHTIN.toLocaleString('en-US') }}</td>
+              </tr>
+              <tr v-if="openTickets.length === 0">
+                <td colspan="4" style="text-align: center;">ไม่พบรายการ</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ตารางสำหรับบัตรที่เสร็จแล้ว -->
+        <div v-show="activeTab === 'completed'">
+          <table>
+            <thead>
+              <tr>
+                <th>เลขที่บัตร</th>
+                <th>ทะเบียนรถ</th>
+                <th>เวลาชั่งออก</th>
+                <th>น้ำหนักสุทธิ (กก.)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="ticket in completedTickets" :key="ticket.WE_ID" @click="showTicketDetails(ticket.WE_ID)" class="clickable-row">
+                <td>{{ ticket.WE_ID }}</td>
+                <td>{{ ticket.WE_LICENSE }}</td>
+                <td>{{ new Date(ticket.WE_TIMEOUT).toLocaleString('th-TH') }}</td>
+                <!-- คำนวณน้ำหนักสุทธิ์ -->
+                <td>{{ Math.abs(ticket.WE_WEIGHTIN - ticket.WE_WEIGHTOUT).toLocaleString('en-US') }}</td>
+              </tr>
+              <tr v-if="completedTickets.length === 0">
+                <td colspan="4" style="text-align: center;">ไม่พบรายการของวันนี้</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+  <!-- 7. นำ Modal Component มาใช้งาน -->
+  <TicketDetailModal 
+    :visible="isModalVisible" 
+    :ticket="selectedTicket"
+    @close="closeModal"
+  />
+</template>
+
+<style scoped>
+/* ส่วนของ CSS เหมือนเดิม แต่เพิ่ม style สำหรับ status bar และ error message */
+:root {
+  --primary-color: #42b883;
+  --secondary-color: #35495e;
+  --bg-color: #f0f2f5;
+  --text-color: #2c3e50;
+  --card-bg: #ffffff;
+  --error-color: #e53935;
+  --connected-color: #43a047;
+  --connecting-color: #f9a825;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-family: sans-serif;
+  margin: 0;
+}
+
+header {
+  background-color: var(--secondary-color);
+  color: white;
+  padding: 1rem 2rem;
+  text-align: center;
+  position: relative;
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 2px solid #ddd;
+  margin-bottom: 1.5rem;
+}
+.tabs button {
+  padding: 1rem 1.5rem;
+  border: none;
+  background-color: transparent;
+  cursor: pointer;
+  font-size: 1rem;
+  color: #666;
+  position: relative;
+  top: 2px;
+}
+.tabs button.active {
+  border-bottom: 2px solid var(--primary-color);
+  font-weight: bold;
+  color: var(--primary-color);
+}
+/* 8. เพิ่ม CSS สำหรับแถวที่คลิกได้ */
+.clickable-row {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+.clickable-row:hover {
+  background-color: #f0f8ff; /* Light blue on hover */
+}
+
+.status-bar {
+  position: absolute;
+  top: 50%;
+  right: 2rem;
+  transform: translateY(-50%);
+  font-size: 0.9rem;
+  background-color: rgba(255, 255, 255, 0.1);
+  padding: 0.3rem 0.8rem;
+  border-radius: 12px;
+}
+.status-bar .connected { color: var(--connected-color); font-weight: bold; }
+.status-bar .connecting...,
+.status-bar .disconnected.-retrying... { color: var(--connecting-color); font-weight: bold; }
+.status-bar .connection-error { color: var(--error-color); font-weight: bold; }
+
+
+main {
+  display: flex;
+  padding: 2rem;
+  gap: 2rem;
+  align-items: flex-start;
+}
+
+.weight-display-container {
+  background-color: var(--card-bg);
+  padding: 2rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  text-align: center;
+  min-width: 350px;
+}
+
+.weight-display {
+  font-size: 4rem;
+  font-weight: bold;
+  color: var(--primary-color);
+  background-color: #eef7f3;
+  padding: 2rem;
+  border-radius: 8px;
+  margin-top: 1rem;
+}
+
+.tickets-container {
+  flex-grow: 1;
+  background-color: var(--card-bg);
+  padding: 2rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+}
+
+th, td {
+  padding: 0.8rem 1rem;
+  border-bottom: 1px solid #ddd;
+  text-align: left;
+}
+
+th {
+  background-color: #f9fafb;
+}
+
+.error-message {
+  color: var(--error-color);
+  background-color: #ffcdd2;
+  border: 1px solid var(--error-color);
+  padding: 1rem;
+  border-radius: 4px;
+  margin-top: 1rem;
+}
+</style>

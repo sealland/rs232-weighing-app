@@ -1,0 +1,67 @@
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List
+from datetime import date, timedelta
+
+from fastapi.middleware.cors import CORSMiddleware
+
+import crud, models, schemas
+from database import SessionLocal, engine
+
+models.Base.metadata.create_all(bind=engine) # บรรทัดนี้อาจจะไม่จำเป็นถ้าตารางมีอยู่แล้ว
+
+app = FastAPI()
+
+origins = [
+    "http://localhost:5173", # URL ของ Vue dev server
+    # คุณอาจจะเพิ่ม URL อื่นๆ ในอนาคต เช่น "http://your-production-domain.com"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins, # อนุญาตเฉพาะ Origins ที่อยู่ในลิสต์นี้
+    allow_credentials=True,
+    allow_methods=["*"], # อนุญาตทุก HTTP Methods (GET, POST, etc.)
+    allow_headers=["*"], # อนุญาตทุก HTTP Headers
+)
+
+# Dependency สำหรับการจัดการ Database Session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@app.get("/api/tickets/", response_model=List[schemas.WeightTicket])
+def read_open_tickets(db: Session = Depends(get_db)):
+    """
+    API Endpoint สำหรับดึงรายการบัตรชั่งทั้งหมดที่ยังชั่งไม่เสร็จ
+    """
+    tickets = crud.get_open_tickets(db)
+    return tickets
+
+# --- API Endpoint ใหม่ ---
+@app.get("/api/tickets/completed", response_model=List[schemas.WeightTicket])
+def read_completed_tickets(target_date: date | None = None, db: Session = Depends(get_db)):
+    """
+    API Endpoint สำหรับดึงรายการบัตรชั่งที่ชั่งเสร็จแล้ว
+    สามารถรับ query parameter 'target_date' (YYYY-MM-DD)
+    ถ้าไม่ระบุ จะใช้ 'วันนี้' เป็นค่าเริ่มต้น
+    """
+    if target_date is None:
+        target_date = date.today() # ถ้าไม่ส่งวันที่มา ให้ใช้วันนี้
+        
+    tickets = crud.get_completed_tickets_by_date(db, target_date=target_date)
+    return tickets
+
+# --- API Endpoint ใหม่สำหรับดึงข้อมูลใบเดียว ---
+@app.get("/api/tickets/{ticket_id}", response_model=schemas.WeightTicketDetails)
+def read_ticket_details(ticket_id: str, db: Session = Depends(get_db)):
+    """
+    API Endpoint สำหรับดึงข้อมูลบัตรชั่งใบเดียวแบบละเอียด
+    """
+    db_ticket = crud.get_ticket_by_id(db, ticket_id=ticket_id)
+    if db_ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return db_ticket

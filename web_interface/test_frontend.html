@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Weight Tester</title>
+    <style>
+        body { font-family: monospace; display: grid; place-content: center; height: 100vh; margin: 0; background-color: #282c34; }
+        #weight-display {
+            font-size: 10rem;
+            font-weight: bold;
+            color: #61dafb;
+            background-color: #1e1e1e;
+            padding: 40px 60px;
+            border-radius: 20px;
+            border: 5px solid #61dafb;
+            min-width: 500px;
+            text-align: center;
+        }
+        #status {
+            color: #999;
+            font-size: 1.5rem;
+            text-align: center;
+            position: absolute;
+            top: 20px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="status">Connecting...</div>
+    <div id="weight-display">0</div>
+
+    <script>
+        const weightDisplay = document.getElementById('weight-display');
+        const statusDisplay = document.getElementById('status');
+        
+        // --- สำคัญ: แก้ไข IP Address ถ้า Agent ไม่ได้รันบนเครื่องเดียวกัน ---
+        const WEBSOCKET_URL = "ws://127.0.0.1:8765"; 
+
+        function connect() {
+            const ws = new WebSocket(WEBSOCKET_URL);
+
+            ws.onopen = function() {
+                console.log("WebSocket connection established.");
+                statusDisplay.textContent = "Connected";
+                statusDisplay.style.color = "#4CAF50";
+            };
+
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.hasOwnProperty('weight')) {
+                        // จัดรูปแบบตัวเลขให้มี comma
+                        const formattedWeight = parseInt(data.weight).toLocaleString('en-US');
+                        weightDisplay.textContent = formattedWeight;
+                    }
+                } catch (e) {
+                    console.error("Error parsing message:", event.data);
+                }
+            };
+
+            ws.onclose = function(event) {
+                console.log("WebSocket connection closed. Reconnecting in 3 seconds...", event.reason);
+                statusDisplay.textContent = "Disconnected. Retrying...";
+                statusDisplay.style.color = "#F44336";
+                setTimeout(connect, 3000); // พยายามเชื่อมต่อใหม่ใน 3 วินาที
+            };
+
+            ws.onerror = function(err) {
+                console.error('WebSocket Error: ', err);
+                statusDisplay.textContent = "Connection Error";
+                statusDisplay.style.color = "#F44336";
+                ws.close(); // การปิดจะ trigger onclose และทำให้เกิดการ reconnect
+            };
+        }
+
+        // เริ่มการเชื่อมต่อครั้งแรก
+        connect();
+
+    </script>
+
+</body>
+</html>
