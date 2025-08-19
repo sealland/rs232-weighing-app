@@ -71,6 +71,17 @@ def read_completed_tickets(target_date: date | None = None, db: Session = Depend
     tickets = crud.get_completed_tickets_by_date(db, target_date=target_date)
     return tickets
 
+@app.patch("/api/tickets/{ticket_id}", response_model=schemas.WeightTicket)
+def edit_ticket(ticket_id: str, ticket_data: schemas.WeightTicketUpdate, db: Session = Depends(get_db)):
+    """
+    API Endpoint สำหรับแก้ไขข้อมูลบัตรชั่ง
+    """
+    updated_ticket = crud.update_ticket(db, ticket_id=ticket_id, ticket_data=ticket_data)
+    if updated_ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return updated_ticket
+# -----------------------------------------
+
 # --- เพิ่ม Endpoint ใหม่สำหรับยกเลิกบัตรชั่ง ---
 @app.delete("/api/tickets/{ticket_id}/cancel", response_model=schemas.WeightTicket)
 def cancel_a_ticket(ticket_id: str, db: Session = Depends(get_db)):

@@ -18,6 +18,9 @@ class WeightTicketUpdateWeighOut(BaseModel):
 class WeightTicketCreate(WeightTicketBase):
     pass
 
+class WeightTicketUpdate(BaseModel):
+    WE_LICENSE: Optional[str] = None
+
 # Schema สำหรับการอ่านข้อมูลจากฐานข้อมูลมาแสดงผล
 class WeightTicket(WeightTicketBase):
     WE_ID: str

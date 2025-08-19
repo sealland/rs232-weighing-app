@@ -168,3 +168,26 @@ def cancel_ticket(db: Session, ticket_id: str):
     
     return db_ticket
 # ---------------------------------------------
+
+def update_ticket(db: Session, ticket_id: str, ticket_data: schemas.WeightTicketUpdate):
+    """
+    แก้ไขข้อมูลของบัตรชั่งตาม ID
+    """
+    # 1. ค้นหาบัตรชั่ง
+    db_ticket = db.query(models.WeightTicket).filter(models.WeightTicket.WE_ID == ticket_id).first()
+
+    if not db_ticket:
+        return None
+    
+    # 2. อัปเดตข้อมูลจาก object ที่ส่งเข้ามา
+    # เราจะอัปเดตเฉพาะ field ที่มีการส่งค่ามา (ไม่เป็น None)
+    update_data = ticket_data.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_ticket, key, value)
+
+    # 3. บันทึกการเปลี่ยนแปลง
+    db.commit()
+    db.refresh(db_ticket)
+    
+    return db_ticket
+# ---------------------------------------------

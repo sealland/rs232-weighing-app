@@ -69,16 +69,20 @@ async function fetchCompletedTickets(dateStr) {
 }
 
 async function showTicketDetails(ticket_id) {
-  isModalVisible.value = true
-  detailTicket.value = null
+  selectTicket(ticket_id);
+  // ไม่ต้องเปิด Modal หรือเคลียร์ค่าที่นี่ก่อน
   try {
-    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticket_id}`)
-    if (!response.ok) throw new Error(`Ticket not found`)
-    detailTicket.value = await response.json()
+    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticket_id}`);
+    if (!response.ok) throw new Error(`Ticket not found`);
+    
+    // เมื่อ fetch สำเร็จแล้ว ค่อยมาอัปเดต state และเปิด Modal
+    detailTicket.value = await response.json();
+    isModalVisible.value = true; // เปิด Modal ที่นี่
+
   } catch (error) {
-    console.error("Failed to fetch ticket details:", error)
-    alert("ไม่สามารถดึงข้อมูลรายละเอียดได้")
-    isModalVisible.value = false
+    console.error("Failed to fetch ticket details:", error);
+    alert("ไม่สามารถดึงข้อมูลรายละเอียดได้");
+    // ไม่ต้องทำอะไรกับ Modal ถ้า fetch ล้มเหลว
   }
 }
 
@@ -274,6 +278,34 @@ async function handleCancelTicket() {
   }
 }
 // ---------------------------------------------
+async function handleTicketUpdate(updatedTicketData) {
+  const ticketId = updatedTicketData.WE_ID;
+
+  // สร้าง object ที่จะส่งไป API เฉพาะ field ที่อนุญาตให้แก้
+  const payload = {
+    WE_LICENSE: updatedTicketData.WE_LICENSE
+  };
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) throw new Error('Failed to update ticket');
+
+    alert('แก้ไขข้อมูลสำเร็จ!');
+    closeModal(); // ปิด Modal
+
+    // โหลดข้อมูลตารางใหม่เพื่อแสดงผลที่อัปเดต
+    await fetchOpenTickets(selectedDate.value);
+    
+  } catch (error) {
+    console.error('Error updating ticket:', error);
+    alert('เกิดข้อผิดพลาดในการแก้ไขข้อมูล');
+  }
+}
 </script>
 
 <template>
@@ -437,6 +469,8 @@ async function handleCancelTicket() {
       :visible="isModalVisible" 
       :ticket="detailTicket"
       @close="closeModal"
+      @weigh-out="handleWeighOut"
+      @ticket-updated="handleTicketUpdate"
     />
   </div>
 </template>
@@ -445,18 +479,28 @@ async function handleCancelTicket() {
 /* =============================================== */
 /* 1. CSS Variables & Global Styles              */
 /* =============================================== */
+/* src/assets/main.css */
 :root {
-  --primary-color: #42b883;
-  --secondary-color: #35495e;
-  --bg-color: #f0f2f5;
-  --text-color: #2c3e50;
-  --card-bg: #ffffff;
-  --error-color: #e53935;
-  --danger-color: #f44336;
-  --danger-hover-color: #d32f2f;
-  --highlight-color: #d1ecf1;
+    --primary-color: #42b883;
+    --secondary-color: #35495e;
+    --bg-color: #f0f2f5;
+    --text-color: #2c3e50;
+    --card-bg: #ffffff;
+    --error-color: #e53935;
+    --danger-color: #f44336;
+    --danger-hover-color: #d32f2f;
+    --highlight-color: #d1ecf1;
 }
 
+html, body, #app {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    height: 100%;
+    overflow: hidden; /* ป้องกัน scrollbar ที่ body */
+    background-color: #f0f2f5; /* ย้ายสีพื้นหลังมาไว้ที่นี่ */
+    font-family: sans-serif;
+}
 /* =============================================== */
 /* 2. Main Layout (โครงสร้างหลัก)                 */
 /* =============================================== */
@@ -592,21 +636,23 @@ button.cancel-button:hover:not(:disabled) {
   border-radius: 4px;
   text-align: right;
 }
+
 button.weigh-out-button {
-  background-color: var(--danger-color);
+  background-color: var(--danger-color, #f44336);
 }
 button.weigh-out-button:hover:not(:disabled) {
-  background-color: var(--danger-hover-color);
+  background-color: var(--danger-hover-color, #d32f2f);
 }
-button[type="submit"] {
-  background-color: var(--primary-color);
+.create-ticket-form button[type="submit"] {
+  background-color: var(--primary-color, #42b883);
 }
-button[type="submit"]:hover:not(:disabled) {
+
+.create-ticket-form button[type="submit"]:hover:not(:disabled) {
   background-color: #36a474;
 }
+
 button.weigh-out-button,
-button.cancel-button,
-button[type="submit"] {
+button.cancel-button {
   width: 100%;
   padding: 1rem;
   color: white;
@@ -621,6 +667,19 @@ button:disabled {
   background-color: #ccc;
   cursor: not-allowed;
 }
+.create-ticket-form button[type="submit"] {
+  width: 100%;
+  padding: 1rem;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1.1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  background-color: var(--primary-color, #42b883); /* <-- ยืนยันสีเขียวที่นี่ */
+}
+
 
 /* =============================================== */
 /* 5. Right Panel Components                       */
