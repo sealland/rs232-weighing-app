@@ -58,19 +58,15 @@ class ShipmentPlan(Base_scale):
     __table_args__ = {'schema': 'dbo'}
 
     # กำหนดคอลัมน์ที่ต้องการใช้งาน
-    VBELN = Column(String) # เลขที่เอกสาร (Delivery Note)
-    POSNR = Column(String) # รายการในเอกสาร (Item Number)
+    VBELN = Column(String, primary_key=True) # <-- กำหนดเป็นส่วนหนึ่งของ PK
+    POSNR = Column(String, primary_key=True) # <-- กำหนดเป็นส่วนหนึ่งของ PK
     AR_NAME = Column(String, nullable=True) # ชื่อลูกค้า
     MATNR = Column(String, nullable=True) # รหัสสินค้า
     ARKTX = Column(String, nullable=True) # ชื่อสินค้า
     NTGEW = Column(Float, nullable=True)  # น้ำหนัก/จำนวน
     VRKME = Column(String, nullable=True) # หน่วยนับ
 
-    # --- กำหนด Composite Primary Key ---
-    # บอก SQLAlchemy ว่า Primary Key ของตารางนี้คือ VBELN และ POSNR รวมกัน
-    __mapper_args__ = {
-        'primary_key': [VBELN, POSNR]
-    }
+
 # ---------------------------------------------
 class CarVisit(Base_pp): # <-- ใช้ Base_pp เพราะอยู่ใน Database PP
     __tablename__ = 'vw_shipment_carvisit_detail'
@@ -79,16 +75,14 @@ class CarVisit(Base_pp): # <-- ใช้ Base_pp เพราะอยู่ใ�
     __table_args__ = {'schema': 'dbo'}
 
     # กำหนดคอลัมน์ที่จำเป็น
-    WADAT_IST = Column(Date)       # วันที่
-    SEQ = Column(String)           # เลขที่คิว
-    CARLICENSE = Column(String)    # ทะเบียนรถ
+    WADAT_IST = Column(Date, primary_key=True)  # <-- กำหนดเป็นส่วนหนึ่งของ PK
+    SEQ = Column(String, primary_key=True)        # <-- กำหนดเป็นส่วนหนึ่งของ PK
+    CARLICENSE = Column(String, primary_key=True) # <-- กำหนดเป็นส่วนหนึ่งของ PK
     AR_NAME = Column(String)       # ชื่อลูกค้า
     KUNNR = Column(String)         # รหัสลูกค้า
     Ship_point = Column(String)    # จุดขึ้นของ
+    TICKET = Column(String, nullable=True)
 
     # บอก SQLAlchemy ว่า View นี้ไม่มี Primary Key ที่ชัดเจน
     # แต่ให้ใช้ WADAT_IST และ SEQ เป็นเหมือน Key ในการทำงาน
-    __mapper_args__ = {
-        'primary_key': [WADAT_IST, SEQ, CARLICENSE]
-    }
 # ---------------------------------------------------

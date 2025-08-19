@@ -217,10 +217,8 @@ def get_available_car_queue(db: Session):
     ดึงข้อมูลคิวรถของวันนี้ ที่ Ship_point = 'P8' และยังไม่มีการสร้างบัตรชั่ง (TICKET IS NULL)
     """
     today = date.today()
-    
     return db.query(models.CarVisit).filter(
         models.CarVisit.WADAT_IST == today,
-        models.CarVisit.Ship_point == 'P8',
-      #  models.CarVisit.TICKET == None # <-- เพิ่มเงื่อนไข TICKET IS NULL
+        models.CarVisit.Ship_point == 'P8'
     ).order_by(models.CarVisit.SEQ).all()
 # ------------------------------------

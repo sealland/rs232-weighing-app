@@ -12,12 +12,21 @@ const emit = defineEmits(['close', 'save']);
 // --- State for the form ---
 const selectedQueueSeq = ref(''); // เก็บ SEQ ของคิวที่ถูกเลือก
 
+// --- State ใหม่สำหรับ "ชั่งแยก" ---
+const separateWeighingPlanId = ref(''); // VBELN ที่จะค้นหา
+const separateWeighingItems = ref([]); // รายการสินค้าที่ค้นหาเจอ
+const searchLoading = ref(false);
+const searchError = ref(null);
+// ------------------------------------
+
 // --- Computed Property ---
 // หา object ของคิวที่ถูกเลือกจาก SEQ
 const selectedQueueObject = computed(() => {
   if (!selectedQueueSeq.value) return null;
   return props.carQueue.find(q => q.SEQ === selectedQueueSeq.value);
 });
+
+
 
 // --- Watcher to reset form when modal opens ---
 watch(() => props.visible, (isVisible) => {

@@ -119,7 +119,6 @@ def update_ticket_weigh_out(
         raise HTTPException(status_code=404, detail="Ticket not found")
     return updated_ticket
 # -----------------------------------------
-
 # --- API Endpoint ใหม่สำหรับดึงข้อมูลใบเดียว ---
 @app.get("/api/tickets/{ticket_id}", response_model=schemas.WeightTicketDetails)
 def read_ticket_details(ticket_id: str, db: Session = Depends(get_db_scale)):
@@ -134,20 +133,12 @@ def read_ticket_details(ticket_id: str, db: Session = Depends(get_db_scale)):
     # --- เพิ่ม Endpoint ใหม่สำหรับค้นหา Shipment Plan ---
 @app.get("/api/shipment-plans/{plan_id}", response_model=List[schemas.ShipmentPlanItem])
 def read_shipment_plan(plan_id: str, db: Session = Depends(get_db_pp)):
-    """
-    API Endpoint สำหรับค้นหาข้อมูลแผนการจัดส่งตามเลขที่เอกสาร (VBELN)
-    """
     plan_items = crud.get_shipment_plan_by_id(db, plan_id=plan_id)
-    # หมายเหตุ: ถ้าไม่เจอข้อมูล ฟังก์ชัน CRUD จะคืนค่าเป็น List ว่าง []
-    # ซึ่งเป็นพฤติกรรมที่ถูกต้องสำหรับ API ค้นหา ไม่จำเป็นต้อง raise 404
     return plan_items
 # -------------------------------------------------
 # --- เพิ่ม Endpoint ใหม่สำหรับดึงคิวรถ ---
 @app.get("/api/car-queue/", response_model=List[schemas.CarVisit])
-def read_car_queue(db: Session = Depends(get_db_pp)): # <-- ใช้ get_db_pp
-    """
-    API Endpoint สำหรับดึงรายการคิวรถที่ยังว่างอยู่ของวันนี้
-    """
+def read_car_queue(db: Session = Depends(get_db_pp)):
     car_queue = crud.get_available_car_queue(db)
     return car_queue
 # ---------------------------------------
