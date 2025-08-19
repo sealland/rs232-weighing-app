@@ -19,10 +19,11 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins, # อนุญาตเฉพาะ Origins ที่อยู่ในลิสต์นี้
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"], # อนุญาตทุก HTTP Methods (GET, POST, etc.)
-    allow_headers=["*"], # อนุญาตทุก HTTP Headers
+    # ระบุ Methods ทั้งหมดที่เราใช้ลงไปตรงๆ
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["*"],
 )
 
 # Dependency สำหรับการจัดการ Database Session
@@ -43,11 +44,17 @@ def create_new_ticket(ticket: schemas.WeightTicketCreate, db: Session = Depends(
 
 
 @app.get("/api/tickets/", response_model=List[schemas.WeightTicket])
-def read_open_tickets(db: Session = Depends(get_db)):
+def read_open_tickets(target_date: date | None = None, db: Session = Depends(get_db)):
     """
-    API Endpoint สำหรับดึงรายการบัตรชั่งทั้งหมดที่ยังชั่งไม่เสร็จ
+    API Endpoint สำหรับดึงรายการบัตรชั่งที่ยังไม่เสร็จ
+    สามารถรับ query parameter 'target_date' (YYYY-MM-DD)
+    ถ้าไม่ระบุ จะใช้ 'วันนี้' เป็นค่าเริ่มต้น
     """
-    tickets = crud.get_open_tickets(db)
+    if target_date is None:
+        target_date = date.today() # ถ้าไม่ส่งวันที่มา ให้ใช้วันนี้
+        
+    # เรียกใช้ฟังก์ชันใหม่ที่แก้ไขแล้ว
+    tickets = crud.get_open_tickets_by_date(db, target_date=target_date)
     return tickets
 
 # --- API Endpoint ใหม่ ---
@@ -63,6 +70,18 @@ def read_completed_tickets(target_date: date | None = None, db: Session = Depend
         
     tickets = crud.get_completed_tickets_by_date(db, target_date=target_date)
     return tickets
+
+# --- เพิ่ม Endpoint ใหม่สำหรับยกเลิกบัตรชั่ง ---
+@app.delete("/api/tickets/{ticket_id}/cancel", response_model=schemas.WeightTicket)
+def cancel_a_ticket(ticket_id: str, db: Session = Depends(get_db)):
+    """
+    API Endpoint สำหรับยกเลิกบัตรชั่ง
+    """
+    cancelled_ticket = crud.cancel_ticket(db, ticket_id=ticket_id)
+    if cancelled_ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return cancelled_ticket
+# -----------------------------------------
 
 # --- เพิ่ม Endpoint ใหม่สำหรับอัปเดต (ชั่งออก) ---
 @app.patch("/api/tickets/{ticket_id}/weigh-out", response_model=schemas.WeightTicket)

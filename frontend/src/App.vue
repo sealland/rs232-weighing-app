@@ -1,6 +1,6 @@
 <script setup>
 import TicketDetailModal from './components/TicketDetailModal.vue'
-import { ref, onMounted, computed } from 'vue' 
+import { ref, onMounted, computed, watch } from 'vue' 
 
 const currentWeight = ref('0')
 const openTickets = ref([])
@@ -9,6 +9,8 @@ const apiError = ref(null)
 const wsStatus = ref('Connecting...')
 const activeTab = ref('inProgress')
 
+const todayDateString = new Date().toISOString().split('T')[0];
+const selectedDate = ref(todayDateString); // ref สำหรับเก็บค่าวันที่ที่เลือก
 
 // State สำหรับ Inline Editing
 const selectedTicketId = ref(null) // <-- State ใหม่: เก็บ ID ของบัตรที่ถูกเลือก
@@ -20,6 +22,7 @@ const isModalVisible = ref(false)
 // State สำหรับ Loading
 const isCreatingTicket = ref(false)
 const isUpdatingTicket = ref(false)
+const isCancellingTicket = ref(false) 
 
 // --- Computed Property ใหม่ ---
 // หาข้อมูลของบัตรที่ถูกเลือกจาก openTickets
@@ -42,31 +45,21 @@ const WEBSOCKET_URL = 'ws://localhost:8765'
  * ฟังก์ชันสำหรับดึงข้อมูลบัตรชั่งที่ยังไม่เสร็จจาก Backend API
  */
 
- // สร้างวันที่ของวันนี้ในรูปแบบ YYYY-MM-DD
-const todayDateString = computed(() => {
-  const today = new Date();
-  return today.toISOString().split('T')[0];
-});
 
-async function fetchOpenTickets() {
+async function fetchOpenTickets(dateStr) {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/tickets/`)
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
-    }
-    const data = await response.json()
-    openTickets.value = data // นำข้อมูลที่ได้ไปใส่ในตัวแปร openTickets
-    apiError.value = null // เคลียร์ error ถ้าสำเร็จ
+    const response = await fetch(`${API_BASE_URL}/api/tickets/?target_date=${dateStr}`)
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+    openTickets.value = await response.json()
   } catch (error) {
-    console.error("Could not fetch tickets:", error)
-    apiError.value = "ไม่สามารถดึงข้อมูลบัตรชั่งได้ กรุณาตรวจสอบ Backend API"
+    console.error("Could not fetch open tickets:", error)
+    apiError.value = "ไม่สามารถดึงข้อมูลบัตรชั่ง 'กำลังดำเนินการ' ได้"
   }
 }
 
-async function fetchCompletedTickets() {
+async function fetchCompletedTickets(dateStr) {
   try {
-    // เรียก API ใหม่โดยใช้วันที่ของวันนี้
-    const response = await fetch(`${API_BASE_URL}/api/tickets/completed?target_date=${todayDateString.value}`)
+    const response = await fetch(`${API_BASE_URL}/api/tickets/completed?target_date=${dateStr}`)
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
     completedTickets.value = await response.json()
   } catch (error) {
@@ -141,6 +134,15 @@ function connectWebSocket() {
     ws.close() // การปิดจะทำให้ onclose ทำงานและพยายามเชื่อมต่อใหม่
   }
 }
+
+watch(selectedDate, async (newDate) => {
+  apiError.value = null; // เคลียร์ error เก่า
+  // เมื่อวันที่เปลี่ยน ให้โหลดข้อมูลของทั้งสองตารางใหม่
+  await Promise.all([
+    fetchOpenTickets(newDate),
+    fetchCompletedTickets(newDate)
+  ]);
+});
 
 // --- Lifecycle Hook ---
 // onMounted คือฟังก์ชันที่จะถูกเรียกใช้งานแค่ 1 ครั้ง
@@ -235,6 +237,43 @@ async function handleWeighOut() {
     isUpdatingTicket.value = false;
   }
 }
+async function handleCancelTicket() {
+  if (!selectedTicketId.value) {
+    alert('กรุณาเลือกบัตรชั่งที่ต้องการยกเลิก');
+    return;
+  }
+
+  // ยืนยันเพื่อความปลอดภัย
+  if (!confirm(`คุณต้องการยกเลิกบัตรชั่งเลขที่ ${selectedTicketId.value} ใช่หรือไม่?`)) {
+    return; // ถ้าผู้ใช้กด Cancel ให้ออกจากฟังก์ชัน
+  }
+
+  isCancellingTicket.value = true;
+  const ticketIdToCancel = selectedTicketId.value;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketIdToCancel}/cancel`, {
+      method: 'DELETE', // <-- ใช้ method DELETE
+    });
+
+    if (!response.ok) {
+      throw new Error('Server error during cancellation!');
+    }
+
+    alert('ยกเลิกบัตรชั่งสำเร็จ!');
+    selectedTicketId.value = null; // ยกเลิกการเลือกบัตร
+
+    // โหลดข้อมูลตาราง "กำลังดำเนินการ" ใหม่อย่างเดียวก็พอ
+    await fetchOpenTickets(selectedDate.value);
+
+  } catch (error) {
+    console.error('Failed to cancel ticket:', error);
+    alert('เกิดข้อผิดพลาดในการยกเลิกบัตรชั่ง');
+  } finally {
+    isCancellingTicket.value = false;
+  }
+}
+// ---------------------------------------------
 </script>
 
 <template>
@@ -243,7 +282,6 @@ async function handleWeighOut() {
       <div class="left-panel card">
         <!-- ส่วนแสดงน้ำหนัก Real-time -->
         <div class="weight-display-container">
-          <h2>น้ำหนักปัจจุบัน</h2>
           <div class="weight-display">
             <span>{{ currentWeight }}</span>
           </div>
@@ -269,6 +307,13 @@ async function handleWeighOut() {
             :disabled="!selectedTicketId || isUpdatingTicket"
           >
             {{ isUpdatingTicket ? 'กำลังบันทึก...' : 'บันทึกน้ำหนักชั่งออก' }}
+          </button>
+          <button 
+            class="cancel-button"
+            @click="handleCancelTicket"
+            :disabled="!selectedTicketId || isUpdatingTicket || isCancellingTicket"
+          >
+            {{ isCancellingTicket ? 'กำลังยกเลิก...' : 'ยกเลิกบัตรชั่ง' }}
           </button>
         </div>
 
@@ -301,6 +346,10 @@ async function handleWeighOut() {
 
       <div class="right-panel card">
         <!-- Tabs สำหรับสลับมุมมอง -->
+        <div class="date-filter-container">
+          <label for="date-filter">เลือกวันที่:</label>
+          <input type="date" id="date-filter" v-model="selectedDate">
+        </div>
         <div class="tabs">
           <button :class="{ active: activeTab === 'inProgress' }" @click="activeTab = 'inProgress'">
             กำลังดำเนินการ ({{ openTickets.length }})
@@ -453,13 +502,6 @@ main {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-.weight-display-container h2 {
-  margin-top: 0;
-  border-bottom: 1px solid #eee;
-  padding-bottom: 1rem;
-  margin-bottom: 1.5rem;
-}
-
 .divider {
   border: none;
   border-top: 1px solid #eee;
@@ -477,9 +519,7 @@ main {
 /* =============================================== */
 /* 4. Left Panel Components                        */
 /* =============================================== */
-.weight-display-container {
-  text-align: center;
-}
+
 .weight-display {
   font-size: 7rem;
   font-weight: bold;
@@ -487,13 +527,26 @@ main {
   background-color: #eef7f3;
   padding: 1.5rem;
   border-radius: 8px;
-  margin-top: 1rem;
+  text-align: center; 
 }
 .action-panel {
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
+/* เพิ่ม Style ใหม่ */
+.action-buttons {
+  display: flex;
+  gap: 0.5rem; /* ระยะห่างระหว่างปุ่ม */
+}
+/* Style สำหรับปุ่มยกเลิก */
+button.cancel-button {
+  background-color: #757575; /* สีเทา */
+}
+button.cancel-button:hover:not(:disabled) {
+  background-color: #616161;
+}
+
 .selected-ticket-info {
   background-color: #f0f2f5;
   padding: 0.8rem;
@@ -551,7 +604,9 @@ button[type="submit"] {
 button[type="submit"]:hover:not(:disabled) {
   background-color: #36a474;
 }
-button.weigh-out-button, button[type="submit"] {
+button.weigh-out-button,
+button.cancel-button,
+button[type="submit"] {
   width: 100%;
   padding: 1rem;
   color: white;
@@ -570,6 +625,25 @@ button:disabled {
 /* =============================================== */
 /* 5. Right Panel Components                       */
 /* =============================================== */
+.date-filter-container {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #eee;
+  flex-shrink: 0;
+}
+.date-filter-container label {
+  font-weight: bold;
+}
+.date-filter-container input[type="date"] {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
 .tabs {
   display: flex;
   border-bottom: 2px solid #ddd;

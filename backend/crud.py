@@ -8,18 +8,22 @@ import models, schemas
 from datetime import date
 
 
-def get_open_tickets(db: Session, skip: int = 0, limit: int = 100):
+def get_open_tickets_by_date(db: Session, target_date: date, skip: int = 0, limit: int = 100):
     """
-    ดึงข้อมูลบัตรชั่งที่
-    1. (น้ำหนักชั่งออกเป็น NULL หรือ 0)
-    AND
-    2. (ยังไม่ถูกยกเลิก)
+    ดึงข้อมูลบัตรชั่งที่ยังไม่เสร็จ (กำลังดำเนินการ)
+    ตามวันที่ที่ระบุ
     """
     return db.query(models.WeightTicket).filter(
+        # เงื่อนไขเดิม: ยังไม่ชั่งออก
         or_(models.WeightTicket.WE_WEIGHTOUT == None, models.WeightTicket.WE_WEIGHTOUT == 0),
-        or_(models.WeightTicket.WE_CANCEL == None, models.WeightTicket.WE_CANCEL == '')
-    ).order_by(models.WeightTicket.WE_TIMEIN.desc()).offset(skip).limit(limit).all()
+        
+        # เงื่อนไขเดิม: ยังไม่ยกเลิก
+        or_(models.WeightTicket.WE_CANCEL == None, models.WeightTicket.WE_CANCEL == ''),
+        
+        # เปลี่ยนจากการใช้ date.today() มาเป็น target_date ที่รับเข้ามา
+        models.WeightTicket.WE_DATE == target_date
 
+    ).order_by(models.WeightTicket.WE_TIMEIN.desc()).offset(skip).limit(limit).all()
 
 def get_completed_tickets_by_date(db: Session, target_date: date, skip: int = 0, limit: int = 100):
     """
@@ -135,6 +139,30 @@ def update_weigh_out(db: Session, ticket_id: str, weigh_out_data: schemas.Weight
         db_ticket.WE_TYPE = 'I'
         
     # 4. บันทึกการเปลี่ยนแปลงลงฐานข้อมูล
+    db.commit()
+    db.refresh(db_ticket)
+    
+    return db_ticket
+# ---------------------------------------------
+
+# --- เพิ่มฟังก์ชันใหม่สำหรับยกเลิกบัตรชั่ง ---
+def cancel_ticket(db: Session, ticket_id: str):
+    """
+    ค้นหาบัตรชั่งตาม ID และอัปเดตสถานะ WE_CANCEL เป็น 'X'
+    """
+    # 1. ค้นหาบัตรชั่งที่ต้องการยกเลิก
+    db_ticket = db.query(models.WeightTicket).filter(models.WeightTicket.WE_ID == ticket_id).first()
+
+    # ถ้าไม่เจอบัตร ให้ return None
+    if not db_ticket:
+        return None
+        
+    # 2. อัปเดต field ที่เกี่ยวข้อง
+    db_ticket.WE_CANCEL = 'X'
+    # หมายเหตุ: ในอนาคตเราอาจจะเพิ่มการบันทึกเหตุผลที่นี่
+    # db_ticket.WE_REASON = reason 
+    
+    # 3. บันทึกการเปลี่ยนแปลงลงฐานข้อมูล
     db.commit()
     db.refresh(db_ticket)
     
