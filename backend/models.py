@@ -72,3 +72,23 @@ class ShipmentPlan(Base_scale):
         'primary_key': [VBELN, POSNR]
     }
 # ---------------------------------------------
+class CarVisit(Base_pp): # <-- ใช้ Base_pp เพราะอยู่ใน Database PP
+    __tablename__ = 'vw_shipment_carvisit_detail'
+    
+    # บอก SQLAlchemy ว่า View นี้อยู่ใน schema 'dbo'
+    __table_args__ = {'schema': 'dbo'}
+
+    # กำหนดคอลัมน์ที่จำเป็น
+    WADAT_IST = Column(Date)       # วันที่
+    SEQ = Column(String)           # เลขที่คิว
+    CARLICENSE = Column(String)    # ทะเบียนรถ
+    AR_NAME = Column(String)       # ชื่อลูกค้า
+    KUNNR = Column(String)         # รหัสลูกค้า
+    Ship_point = Column(String)    # จุดขึ้นของ
+
+    # บอก SQLAlchemy ว่า View นี้ไม่มี Primary Key ที่ชัดเจน
+    # แต่ให้ใช้ WADAT_IST และ SEQ เป็นเหมือน Key ในการทำงาน
+    __mapper_args__ = {
+        'primary_key': [WADAT_IST, SEQ, CARLICENSE]
+    }
+# ---------------------------------------------------

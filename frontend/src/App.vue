@@ -1,5 +1,6 @@
 <script setup>
 import TicketDetailModal from './components/TicketDetailModal.vue'
+import CreateTicketModal from './components/CreateTicketModal.vue' 
 import { ref, onMounted, computed, watch } from 'vue' 
 
 
@@ -9,8 +10,8 @@ const completedTickets = ref([])
 const apiError = ref(null)
 const wsStatus = ref('Connecting...')
 const activeTab = ref('inProgress')
+const carQueue = ref([]);
 
-const newTicketLicense = ref('') // เก็บค่าทะเบียนรถที่กรอก
 const selectedDate = ref(new Date().toISOString().split('T')[0]);
 
 // State สำหรับ Inline Editing
@@ -24,6 +25,9 @@ const isModalVisible = ref(false)
 const isCreatingTicket = ref(false)
 const isUpdatingTicket = ref(false)
 const isCancellingTicket = ref(false) 
+
+const isCreateModalVisible = ref(false);
+const initialWeightForNewTicket = ref(0);
 
 // --- Computed Property ใหม่ ---
 // หาข้อมูลของบัตรที่ถูกเลือกจาก openTickets
@@ -93,6 +97,17 @@ async function showTicketDetails(ticket_id) {
     // ไม่ต้องทำอะไรกับ Modal ถ้า fetch ล้มเหลว
   }
 }
+async function fetchCarQueue() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/car-queue/`);
+    if (!response.ok) throw new Error('Could not fetch car queue');
+    carQueue.value = await response.json();
+  } catch (error) {
+    console.error(error);
+    // อาจจะแสดง error ให้ผู้ใช้เห็นในอนาคต
+  }
+}
+
 
 function closeModal() {
   isModalVisible.value = false
@@ -172,48 +187,28 @@ onMounted(() => {
 });
 
 // --- เพิ่มฟังก์ชันใหม่สำหรับสร้างบัตรชั่ง ---
-async function handleCreateTicket() {
-  // ตรวจสอบข้อมูลเบื้องต้น
-  if (!newTicketLicense.value.trim()) {
-    alert('กรุณากรอกทะเบียนรถ');
-    return;
-  }
-  
-  // แปลงค่าน้ำหนักปัจจุบันกลับเป็นตัวเลข (เอา comma ออก)
-  const weightValue = parseInt(currentWeight.value.replace(/,/g, ''), 10);
-  if (isNaN(weightValue)) {
-     alert('ค่าน้ำหนักไม่ถูกต้อง');
-     return;
-  }
-
-  isCreatingTicket.value = true; // เริ่มสถานะ loading
+async function handleCreateTicket(ticketData) {
+  isCreatingTicket.value = true; // ยังคงใช้ isCreatingTicket สำหรับ loading
 
   try {
+    // ใช้ ticketData ที่ส่งมาจาก Modal
     const response = await fetch(`${API_BASE_URL}/api/tickets/`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        WE_LICENSE: newTicketLicense.value,
-        WE_WEIGHTIN: weightValue,
-      }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ticketData), 
     });
 
-    if (!response.ok) {
-      throw new Error('Server responded with an error!');
-    }
+    if (!response.ok) throw new Error('Server error!');
 
-    // เมื่อสร้างสำเร็จ
     alert('สร้างบัตรชั่งใหม่สำเร็จ!');
-    newTicketLicense.value = ''; // ล้างค่าในฟอร์ม
+    isCreateModalVisible.value = false; // ปิด Modal
     await fetchOpenTickets(selectedDate.value);
     
   } catch (error) {
     console.error('Failed to create ticket:', error);
     alert('เกิดข้อผิดพลาดในการสร้างบัตรชั่ง');
   } finally {
-    isCreatingTicket.value = false; // สิ้นสุดสถานะ loading
+    isCreatingTicket.value = false;
   }
 }
 
@@ -342,6 +337,22 @@ async function refreshTicketData(ticketId) {
   await showTicketDetails(ticketId);
 }
 
+// --- เพิ่มฟังก์ชันใหม่สำหรับเปิด Modal ---
+async function openCreateTicketModal() {
+  // 1. โหลดข้อมูลคิวล่าสุดทุกครั้งที่เปิด
+  await fetchCarQueue();
+
+  // 2. อ่านค่าน้ำหนักปัจจุบัน
+  const weightValue = parseInt(currentWeight.value.replace(/,/g, ''), 10);
+  if (isNaN(weightValue)) {
+     alert('ค่าน้ำหนักไม่ถูกต้อง');
+     return;
+  }
+  initialWeightForNewTicket.value = weightValue;
+  isCreateModalVisible.value = true;
+}
+// ------------------------------------
+
 </script>
 
 <template>
@@ -357,6 +368,11 @@ async function refreshTicketData(ticketId) {
 
         <!-- เส้นแบ่ง -->
         <hr class="divider">
+        <div class="create-ticket-panel">
+          <button @click="openCreateTicketModal" class="create-ticket-button">
+            สร้างบัตรชั่งใหม่
+          </button>
+        </div>
 
         <!-- ส่วน Action Panel -->
         <div class="action-panel">
@@ -400,6 +416,14 @@ async function refreshTicketData(ticketId) {
                 placeholder="กรอกทะเบียนรถ..."
                 required
               >
+            </div>
+            <div class="form-group">
+              <label for="vendor-name">ชื่อลูกค้า</label>
+              <input id="vendor-name" type="text" v-model="newTicketVendor">
+            </div>
+            <div class="form-group">
+              <label for="material-name">ชื่อสินค้า (กรณีชั่งแยก)</label>
+              <input id="material-name" type="text" v-model="newTicketMaterial">
             </div>
             <button type="submit" :disabled="isCreatingTicket">
               {{ isCreatingTicket ? 'กำลังบันทึก...' : 'บันทึกการชั่งเข้า' }}
@@ -503,6 +527,13 @@ async function refreshTicketData(ticketId) {
     @close="closeModal"
     @weigh-out="handleWeighOut"
     @ticket-updated="refreshTicketData(detailTicket.WE_ID)"
+    />
+    <CreateTicketModal
+      :visible="isCreateModalVisible"
+      :initial-weight-in="initialWeightForNewTicket"
+      :car-queue="carQueue"
+      @close="isCreateModalVisible = false"
+      @save="handleCreateTicket"
     />
   </div>
 </template>
@@ -806,6 +837,22 @@ th {
   display: block;
   max-width: 100%;
   white-space: nowrap;
+}
+
+.create-ticket-button {
+  width: 100%;
+  padding: 1rem;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1.1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  background-color: var(--primary-color);
+}
+.create-ticket-button:hover {
+  background-color: #36a474;
 }
 
 </style>

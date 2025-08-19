@@ -10,16 +10,22 @@ class WeightTicketBase(BaseModel):
 class WeightTicketCreate(BaseModel):
     WE_LICENSE: str
     WE_WEIGHTIN: float
-
+    WE_VENDOR: Optional[str] = None
+    WE_VENDOR_CD: Optional[str] = None
+    WE_DIREF: Optional[str] = None
+    WE_MAT_CD: Optional[str] = None
+    WE_MAT: Optional[str] = None
+    
 class WeightTicketUpdateWeighOut(BaseModel):
     WE_WEIGHTOUT: float
 
-# Schema สำหรับการสร้างข้อมูล (อาจจะไม่ต้องใช้ตอนนี้)
-class WeightTicketCreate(WeightTicketBase):
-    pass
-
 class WeightTicketUpdate(BaseModel):
     WE_LICENSE: Optional[str] = None
+    WE_VENDOR_CD: Optional[str] = None
+    WE_VENDOR: Optional[str] = None
+    WE_DIREF: Optional[str] = None
+    WE_MAT_CD: Optional[str] = None
+    WE_MAT: Optional[str] = None
 
 # Schema สำหรับการอ่านข้อมูลจากฐานข้อมูลมาแสดงผล
 class WeightTicket(WeightTicketBase):
@@ -87,3 +93,13 @@ class WeightTicketItemCreate(BaseModel):
     WE_UOM: Optional[str] = None
 
 # -------------------------------------------------------------
+# --- เพิ่ม Schema ใหม่สำหรับ 1 รายการในคิวรถ ---
+class CarVisit(BaseModel):
+    SEQ: str
+    CARLICENSE: str
+    AR_NAME: Optional[str] = None
+    KUNNR: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+# -------------------------------------------

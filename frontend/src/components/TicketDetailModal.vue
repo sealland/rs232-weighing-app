@@ -24,6 +24,8 @@ const isEditing = ref(false);
 
 // editableTicket จะถูกสร้างขึ้นมาใหม่ทุกครั้งที่เข้าโหมดแก้ไข
 const editableLicense = ref(''); 
+const editableVendor = ref('');
+const editableMaterial = ref('');
 
 const searchPlanId = ref(''); // เก็บค่า VBELN ที่จะค้นหา
 const searchResults = ref([]); // เก็บผลลัพธ์การค้นหา
@@ -46,6 +48,8 @@ watch(() => props.ticket, () => {
 function startEditing() {
   // เมื่อเริ่มแก้ไข ให้ copy ทะเบียนรถปัจจุบันมาเก็บไว้
   editableLicense.value = props.ticket.WE_LICENSE;
+  editableVendor.value = props.ticket.WE_VENDOR;
+  editableMaterial.value = props.ticket.WE_MAT;
   isEditing.value = true;
 }
 
@@ -53,7 +57,9 @@ function handleSaveChanges() {
   // สร้าง object ข้อมูลที่แก้ไขแล้วเพื่อส่งกลับ
   const updatedData = {
     ...props.ticket, // เอาข้อมูลเดิมทั้งหมดมา
-    WE_LICENSE: editableLicense.value // เอาทะเบียนรถที่แก้ไขใหม่ทับเข้าไป
+    WE_LICENSE: editableLicense.value, // เอาทะเบียนรถที่แก้ไขใหม่ทับเข้าไป
+    WE_VENDOR: editableVendor.value,
+    WE_MAT: editableMaterial.value
   };
   emit('ticket-updated', updatedData);
   // isEditing จะถูก reset โดย watcher เมื่อข้อมูลอัปเดต
@@ -153,8 +159,11 @@ async function handleSearchPlan() {
             <!-- แสดงข้อความปกติ -->
             <span v-else>{{ ticket.WE_LICENSE }}</span>
           </div>
-          <div class="customer-info"><strong>ลูกค้า:</strong> {{ ticket.WE_VENDOR_CD }} - {{ ticket.WE_VENDOR }}</div>
-          
+          <div class="customer-info">
+            <strong>ลูกค้า:</strong>
+            <input v-if="isEditing" type="text" v-model="editableVendor" class="edit-input">
+            <span v-else>{{ ticket.WE_VENDOR_CD }} - {{ ticket.WE_VENDOR }}</span>
+          </div>
           <div><strong>เวลาชั่งเข้า:</strong> {{ new Date(ticket.WE_TIMEIN).toLocaleString('th-TH') }}</div>
           <div><strong>เวลาชั่งออก:</strong> {{ ticket.WE_TIMEOUT ? new Date(ticket.WE_TIMEOUT).toLocaleString('th-TH') : '-' }}</div>
           <div><strong>น้ำหนักชั่งเข้า:</strong> {{ ticket.WE_WEIGHTIN?.toLocaleString('en-US') }} กก.</div>
@@ -202,16 +211,17 @@ async function handleSearchPlan() {
               </tr>
             </thead>
             <tbody>
-              <tr v-if="ticket.WE_ID">
+              <tr>
                 <td>{{ ticket.WE_DIREF }}</td>
                 <td>{{ ticket.WE_MAT_CD }}</td>
-                <td>{{ ticket.WE_MAT }}</td>
+                <td>
+                  <!-- ทำให้ชื่อสินค้า (ชั่งแยก) แก้ไขได้ -->
+                  <input v-if="isEditing" type="text" v-model="editableMaterial" class="edit-input">
+                  <span v-else>{{ ticket.WE_MAT }}</span>
+                </td>
                 <td>{{ ticket.WE_QTY }}</td>
                 <td>{{ ticket.WE_UOM }}</td>
               </tr>
-               <tr v-else>
-                 <td colspan="5">ไม่พบรายการสินค้า</td>
-               </tr>
             </tbody>
           </table>
         </div>

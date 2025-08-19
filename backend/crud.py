@@ -1,13 +1,10 @@
-# crud.py
-
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, Date, cast, Integer, String
 from datetime import date, datetime
 import random
-from typing import List
-import models, schemas 
-from datetime import date
-
+from typing import List # <--- **ตรวจสอบให้แน่ใจว่าบรรทัดนี้มีอยู่**
+import models
+import schemas
 
 def get_open_tickets_by_date(db: Session, target_date: date, skip: int = 0, limit: int = 100):
     """
@@ -52,61 +49,42 @@ def create_ticket(db: Session, ticket: schemas.WeightTicketCreate):
     """
     สร้างบัตรชั่งใหม่ในฐานข้อมูล โดยมี WE_ID ตาม format Z1-YYMMDD-XXX (Running)
     """
-    # --- ส่วนการสร้าง WE_ID ---
-    
-    # 1. กำหนด Prefix และ format วันที่ปัจจุบัน
-    prefix = "Z1" # ในอนาคตจะดึงมาจาก setting
+    # 1. สร้าง WE_ID
+    prefix = "Z1"
     today = datetime.now()
-    
-    # แปลงเป็นปี พ.ศ. แล้วเอาแค่เลขตัวสุดท้าย
     buddhist_year_last_digit = str(today.year + 543)[-1] 
+    date_format = f"{buddhist_year_last_digit}{today.strftime('%m%d')}"
+    id_prefix_for_today = f"{prefix}{date_format}"
     
-    date_format = f"{buddhist_year_last_digit}{today.strftime('%m%d')}" # Ex: 80818
-    id_prefix_for_today = f"{prefix}{date_format}" # Ex: Z180818
-    
-    # 2. ค้นหา Running Number ล่าสุดของวันนี้จากฐานข้อมูล
-    # เราจะหา WE_ID ที่ขึ้นต้นด้วย id_prefix_for_today (เช่น 'Z180818%')
-    # แล้วแปลง 3 ตัวท้ายให้เป็นตัวเลข เพื่อหาค่าที่มากที่สุด
-    
-    # สร้าง subquery เพื่อแปลง 3 ตัวท้ายเป็น Integer
-    # RIGHT(WE_ID, 3) คือการดึง 3 ตัวอักษรสุดท้าย
-    # CAST(...) คือการแปลงชนิดข้อมูล
     last_three_digits_as_int = cast(func.right(models.WeightTicket.WE_ID, 3), Integer)
-
-    # ค้นหาค่า running ล่าสุด
     last_running_number = db.query(func.max(last_three_digits_as_int)).filter(
         models.WeightTicket.WE_ID.like(f"{id_prefix_for_today}%")
     ).scalar()
 
-    # 3. สร้าง Running Number ใหม่
     if last_running_number is None:
-        # ถ้ายังไม่มีข้อมูลของวันนี้เลย ให้เริ่มที่ 1
         new_running_number = 1
     else:
-        # ถ้ามีแล้ว ให้บวก 1
         new_running_number = last_running_number + 1
         
-    # 4. ประกอบร่างเป็น WE_ID ตัวสุดท้าย (10 หลัก)
-    # .zfill(3) คือการเติม 0 ข้างหน้าให้ครบ 3 หลัก เช่น 1 -> "001", 12 -> "012"
     new_ticket_id = f"{id_prefix_for_today}{str(new_running_number).zfill(3)}"
-
-    # -----------------------------
-
-    # สร้าง object ของ SQLAlchemy Model
+    
     db_ticket = models.WeightTicket(
         WE_ID=new_ticket_id,
         WE_LICENSE=ticket.WE_LICENSE,
         WE_WEIGHTIN=ticket.WE_WEIGHTIN,
         WE_TIMEIN=datetime.now(),
+        WE_DATE=datetime.now().date(),
         WE_TYPE='I',
-         WE_DATE=datetime.now().date(),
+        WE_VENDOR_CD=ticket.WE_VENDOR_CD,
+        WE_VENDOR=ticket.WE_VENDOR,
+        WE_DIREF=ticket.WE_DIREF,
+        WE_MAT_CD=ticket.WE_MAT_CD,
+        WE_MAT=ticket.WE_MAT
     )
     
-    # บันทึกลงฐานข้อมูล
     db.add(db_ticket)
     db.commit()
     db.refresh(db_ticket)
-    
     return db_ticket
 
 # --- เพิ่มฟังก์ชันใหม่สำหรับอัปเดตการชั่งออก ---
@@ -233,3 +211,16 @@ def add_items_to_ticket(db: Session, ticket_id: str, items: List[schemas.WeightT
     db.refresh(db_ticket)
     return db_ticket
 # ------------------------------------------------
+# --- เพิ่มฟังก์ชันใหม่สำหรับดึงคิวรถ ---
+def get_available_car_queue(db: Session):
+    """
+    ดึงข้อมูลคิวรถของวันนี้ ที่ Ship_point = 'P8' และยังไม่มีการสร้างบัตรชั่ง (TICKET IS NULL)
+    """
+    today = date.today()
+    
+    return db.query(models.CarVisit).filter(
+        models.CarVisit.WADAT_IST == today,
+        models.CarVisit.Ship_point == 'P8',
+      #  models.CarVisit.TICKET == None # <-- เพิ่มเงื่อนไข TICKET IS NULL
+    ).order_by(models.CarVisit.SEQ).all()
+# ------------------------------------

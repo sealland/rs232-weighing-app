@@ -142,6 +142,15 @@ def read_shipment_plan(plan_id: str, db: Session = Depends(get_db_pp)):
     # ซึ่งเป็นพฤติกรรมที่ถูกต้องสำหรับ API ค้นหา ไม่จำเป็นต้อง raise 404
     return plan_items
 # -------------------------------------------------
+# --- เพิ่ม Endpoint ใหม่สำหรับดึงคิวรถ ---
+@app.get("/api/car-queue/", response_model=List[schemas.CarVisit])
+def read_car_queue(db: Session = Depends(get_db_pp)): # <-- ใช้ get_db_pp
+    """
+    API Endpoint สำหรับดึงรายการคิวรถที่ยังว่างอยู่ของวันนี้
+    """
+    car_queue = crud.get_available_car_queue(db)
+    return car_queue
+# ---------------------------------------
 
 # --- เพิ่ม Endpoint ใหม่สำหรับเพิ่มรายการสินค้า ---
 @app.post("/api/tickets/{ticket_id}/items", response_model=schemas.WeightTicketDetails)
