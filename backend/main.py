@@ -6,9 +6,10 @@ from datetime import date, timedelta
 from fastapi.middleware.cors import CORSMiddleware
 
 import crud, models, schemas
-from database import SessionLocal, engine
+from database import SessionLocal_scale
+from database_pp import SessionLocal_pp
 
-models.Base.metadata.create_all(bind=engine) # บรรทัดนี้อาจจะไม่จำเป็นถ้าตารางมีอยู่แล้ว
+#models.Base.metadata.create_all(bind=engine) # บรรทัดนี้อาจจะไม่จำเป็นถ้าตารางมีอยู่แล้ว
 
 app = FastAPI()
 
@@ -27,16 +28,25 @@ app.add_middleware(
 )
 
 # Dependency สำหรับการจัดการ Database Session
-def get_db():
-    db = SessionLocal()
+# --- Dependency สำหรับแต่ละ Database ---
+def get_db_scale():
+    db = SessionLocal_scale()
     try:
         yield db
     finally:
         db.close()
 
+def get_db_pp():
+    db = SessionLocal_pp()
+    try:
+        yield db
+    finally:
+        db.close()
+# ------------------------------------
+
 # ควรวางไว้ก่อน Endpoint ที่มี Path Parameter เพื่อความเป็นระเบียบ
 @app.post("/api/tickets/", response_model=schemas.WeightTicket)
-def create_new_ticket(ticket: schemas.WeightTicketCreate, db: Session = Depends(get_db)):
+def create_new_ticket(ticket: schemas.WeightTicketCreate, db: Session = Depends(get_db_scale)):
     """
     API Endpoint สำหรับสร้างบัตรชั่งใหม่
     """
@@ -44,7 +54,7 @@ def create_new_ticket(ticket: schemas.WeightTicketCreate, db: Session = Depends(
 
 
 @app.get("/api/tickets/", response_model=List[schemas.WeightTicket])
-def read_open_tickets(target_date: date | None = None, db: Session = Depends(get_db)):
+def read_open_tickets(target_date: date | None = None, db: Session = Depends(get_db_scale)):
     """
     API Endpoint สำหรับดึงรายการบัตรชั่งที่ยังไม่เสร็จ
     สามารถรับ query parameter 'target_date' (YYYY-MM-DD)
@@ -59,7 +69,7 @@ def read_open_tickets(target_date: date | None = None, db: Session = Depends(get
 
 # --- API Endpoint ใหม่ ---
 @app.get("/api/tickets/completed", response_model=List[schemas.WeightTicket])
-def read_completed_tickets(target_date: date | None = None, db: Session = Depends(get_db)):
+def read_completed_tickets(target_date: date | None = None, db: Session = Depends(get_db_scale)):
     """
     API Endpoint สำหรับดึงรายการบัตรชั่งที่ชั่งเสร็จแล้ว
     สามารถรับ query parameter 'target_date' (YYYY-MM-DD)
@@ -72,7 +82,7 @@ def read_completed_tickets(target_date: date | None = None, db: Session = Depend
     return tickets
 
 @app.patch("/api/tickets/{ticket_id}", response_model=schemas.WeightTicket)
-def edit_ticket(ticket_id: str, ticket_data: schemas.WeightTicketUpdate, db: Session = Depends(get_db)):
+def edit_ticket(ticket_id: str, ticket_data: schemas.WeightTicketUpdate, db: Session = Depends(get_db_scale)):
     """
     API Endpoint สำหรับแก้ไขข้อมูลบัตรชั่ง
     """
@@ -84,7 +94,7 @@ def edit_ticket(ticket_id: str, ticket_data: schemas.WeightTicketUpdate, db: Ses
 
 # --- เพิ่ม Endpoint ใหม่สำหรับยกเลิกบัตรชั่ง ---
 @app.delete("/api/tickets/{ticket_id}/cancel", response_model=schemas.WeightTicket)
-def cancel_a_ticket(ticket_id: str, db: Session = Depends(get_db)):
+def cancel_a_ticket(ticket_id: str, db: Session = Depends(get_db_scale)):
     """
     API Endpoint สำหรับยกเลิกบัตรชั่ง
     """
@@ -99,7 +109,7 @@ def cancel_a_ticket(ticket_id: str, db: Session = Depends(get_db)):
 def update_ticket_weigh_out(
     ticket_id: str, 
     weigh_out_data: schemas.WeightTicketUpdateWeighOut, 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_scale)
 ):
     """
     API Endpoint สำหรับบันทึกน้ำหนักชั่งออก
@@ -112,7 +122,7 @@ def update_ticket_weigh_out(
 
 # --- API Endpoint ใหม่สำหรับดึงข้อมูลใบเดียว ---
 @app.get("/api/tickets/{ticket_id}", response_model=schemas.WeightTicketDetails)
-def read_ticket_details(ticket_id: str, db: Session = Depends(get_db)):
+def read_ticket_details(ticket_id: str, db: Session = Depends(get_db_scale)):
     """
     API Endpoint สำหรับดึงข้อมูลบัตรชั่งใบเดียวแบบละเอียด
     """
@@ -120,3 +130,31 @@ def read_ticket_details(ticket_id: str, db: Session = Depends(get_db)):
     if db_ticket is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
     return db_ticket
+
+    # --- เพิ่ม Endpoint ใหม่สำหรับค้นหา Shipment Plan ---
+@app.get("/api/shipment-plans/{plan_id}", response_model=List[schemas.ShipmentPlanItem])
+def read_shipment_plan(plan_id: str, db: Session = Depends(get_db_pp)):
+    """
+    API Endpoint สำหรับค้นหาข้อมูลแผนการจัดส่งตามเลขที่เอกสาร (VBELN)
+    """
+    plan_items = crud.get_shipment_plan_by_id(db, plan_id=plan_id)
+    # หมายเหตุ: ถ้าไม่เจอข้อมูล ฟังก์ชัน CRUD จะคืนค่าเป็น List ว่าง []
+    # ซึ่งเป็นพฤติกรรมที่ถูกต้องสำหรับ API ค้นหา ไม่จำเป็นต้อง raise 404
+    return plan_items
+# -------------------------------------------------
+
+# --- เพิ่ม Endpoint ใหม่สำหรับเพิ่มรายการสินค้า ---
+@app.post("/api/tickets/{ticket_id}/items", response_model=schemas.WeightTicketDetails)
+def add_items_to_a_ticket(
+    ticket_id: str,
+    items: List[schemas.WeightTicketItemCreate], # <-- รับ List ของ Items จาก Body
+    db: Session = Depends(get_db_scale)
+):
+    """
+    API Endpoint สำหรับเพิ่มรายการสินค้า (จาก Shipment Plan) เข้าไปในบัตรชั่ง
+    """
+    updated_ticket = crud.add_items_to_ticket(db, ticket_id=ticket_id, items=items)
+    if updated_ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return updated_ticket
+# ----------------------------------------------

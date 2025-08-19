@@ -1,20 +1,28 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+# database.py
 
-# --- ตั้งค่าการเชื่อมต่อ SQL Server ---
-# **สำคัญมาก:** แก้ไขค่าด้านล่างให้ตรงกับข้อมูลของคุณ
-SERVER = "192.168.100.29"  # เช่น "192.168.1.100" หรือ "MY-SERVER-NAME\SQLEXPRESS"
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
+
+# --- ตั้งค่าการเชื่อมต่อ ZUBBSCALE_HQ ---
+SERVER = "192.168.100.29" # IP ของ ZUBBSCALE_HQ
 DATABASE = "ZUBBSCALE"
 USERNAME = "sa"
 PASSWORD = "sipco77"
-# ตรวจสอบให้แน่ใจว่าคุณได้ติดตั้ง Driver ที่จำเป็นแล้ว (เช่น ODBC Driver 17 for SQL Server)
-DRIVER = "ODBC Driver 17 for SQL Server" 
+DRIVER = "ODBC Driver 17 for SQL Server"
 
-SQLALCHEMY_DATABASE_URL = f"mssql+pyodbc://{USERNAME}:{PASSWORD}@{SERVER}/{DATABASE}?driver={DRIVER}"
+SQLALCHEMY_DATABASE_URL = (
+    f"mssql+pyodbc://{USERNAME}:{PASSWORD}@"
+    f"{SERVER}/{DATABASE}?driver={DRIVER}"
+)
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+# เพิ่ม options สำหรับ Connection Pool
+engine_scale = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    pool_pre_ping=True, # ตรวจสอบ connection ก่อนใช้งาน
+    pool_recycle=3600   # คืน connection ที่ไม่ได้ใช้เกิน 1 ชม.
+)
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal_scale = sessionmaker(autocommit=False, autoflush=False, bind=engine_scale)
 
-Base = declarative_base()
+Base_scale = declarative_base()

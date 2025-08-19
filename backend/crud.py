@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, Date, cast, Integer, String
 from datetime import date, datetime
 import random
+from typing import List
 import models, schemas 
 from datetime import date
 
@@ -191,3 +192,44 @@ def update_ticket(db: Session, ticket_id: str, ticket_data: schemas.WeightTicket
     
     return db_ticket
 # ---------------------------------------------
+
+# --- เพิ่มฟังก์ชันใหม่สำหรับค้นหา Shipment Plan ---
+def get_shipment_plan_by_id(db: Session, plan_id: str):
+    """
+    ค้นหารายการทั้งหมดใน Shipment Plan ตาม VBELN (plan_id)
+    """
+    # ค้นหาทุกรายการ (ทุก POSNR) ที่มี VBELN ตรงกับที่ระบุ
+    return db.query(models.ShipmentPlan).filter(models.ShipmentPlan.VBELN == plan_id).all()
+# ---------------------------------------------
+
+def add_items_to_ticket(db: Session, ticket_id: str, items: List[schemas.WeightTicketItemCreate]):
+    """
+    เพิ่มรายการสินค้าหลายรายการเข้าไปในบัตรชั่งที่ระบุ
+    """
+    # 1. ค้นหาบัตรชั่งหลักก่อน เพื่อให้แน่ใจว่ามีอยู่จริง
+    db_ticket = db.query(models.WeightTicket).filter(models.WeightTicket.WE_ID == ticket_id).first()
+    if not db_ticket:
+        return None # คืนค่า None ถ้าไม่เจอบัตรหลัก
+
+    # 2. วนลูปสร้าง object ของ SQLAlchemy Model สำหรับแต่ละ item ที่ส่งมา
+    new_db_items = []
+    for item in items:
+        db_item = models.WeightTicketItem(
+            WE_ID=ticket_id, # <-- ใช้ ticket_id จาก URL
+            VBELN=item.VBELN,
+            POSNR=item.POSNR,
+            WE_MAT_CD=item.WE_MAT_CD,
+            WE_MAT=item.WE_MAT,
+            WE_QTY=item.WE_QTY,
+            WE_UOM=item.WE_UOM,
+        )
+        new_db_items.append(db_item)
+        
+    # 3. บันทึกรายการใหม่ทั้งหมดลงฐานข้อมูลในครั้งเดียว
+    db.add_all(new_db_items)
+    db.commit()
+    
+    # 4. คืนค่าบัตรชั่งที่อัปเดตแล้ว (เพื่อให้เห็นรายการใหม่)
+    db.refresh(db_ticket)
+    return db_ticket
+# ------------------------------------------------

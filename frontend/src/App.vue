@@ -2,6 +2,7 @@
 import TicketDetailModal from './components/TicketDetailModal.vue'
 import { ref, onMounted, computed, watch } from 'vue' 
 
+
 const currentWeight = ref('0')
 const openTickets = ref([])
 const completedTickets = ref([])
@@ -9,8 +10,8 @@ const apiError = ref(null)
 const wsStatus = ref('Connecting...')
 const activeTab = ref('inProgress')
 
-const todayDateString = new Date().toISOString().split('T')[0];
-const selectedDate = ref(todayDateString); // ref สำหรับเก็บค่าวันที่ที่เลือก
+const newTicketLicense = ref('') // เก็บค่าทะเบียนรถที่กรอก
+const selectedDate = ref(new Date().toISOString().split('T')[0]);
 
 // State สำหรับ Inline Editing
 const selectedTicketId = ref(null) // <-- State ใหม่: เก็บ ID ของบัตรที่ถูกเลือก
@@ -31,6 +32,13 @@ const selectedTicketObject = computed(() => {
   return openTickets.value.find(t => t.WE_ID === selectedTicketId.value);
 });
 
+const weightFontSize = computed(() => {
+  const len = (currentWeight.value || '').toString().length;
+  if (len <= 6) return '6.7rem';
+  if (len <= 8) return '6rem';
+  if (len <= 10) return '5rem';
+  return '4rem';
+});
 
 
 const API_BASE_URL = 'http://localhost:8000'
@@ -64,7 +72,7 @@ async function fetchCompletedTickets(dateStr) {
     completedTickets.value = await response.json()
   } catch (error) {
     console.error("Could not fetch completed tickets:", error)
-    apiError.value = "ไม่สามารถดึงข้อมูลบัตรชั่ง 'เสร็จสิ้นแล้ว' ได้"
+    apiError.value = "ยังไม่มีรายการชั่งชั่งเข้า"
   }
 }
 
@@ -151,11 +159,17 @@ watch(selectedDate, async (newDate) => {
 // --- Lifecycle Hook ---
 // onMounted คือฟังก์ชันที่จะถูกเรียกใช้งานแค่ 1 ครั้ง
 // หลังจากที่หน้าเว็บถูกสร้างขึ้นมาเสร็จสมบูรณ์
+async function fetchInitialData() {
+  await Promise.all([
+    fetchOpenTickets(selectedDate.value),
+    fetchCompletedTickets(selectedDate.value)
+  ]);
+}
+
 onMounted(() => {
-  fetchOpenTickets()
-  fetchCompletedTickets()
-  connectWebSocket()
-})
+  fetchInitialData(); // <-- เรียกฟังก์ชันใหม่
+  connectWebSocket();
+});
 
 // --- เพิ่มฟังก์ชันใหม่สำหรับสร้างบัตรชั่ง ---
 async function handleCreateTicket() {
@@ -193,7 +207,7 @@ async function handleCreateTicket() {
     // เมื่อสร้างสำเร็จ
     alert('สร้างบัตรชั่งใหม่สำเร็จ!');
     newTicketLicense.value = ''; // ล้างค่าในฟอร์ม
-    await fetchOpenTickets(); // โหลดข้อมูลตารางใหม่เพื่อให้เห็นบัตรล่าสุด
+    await fetchOpenTickets(selectedDate.value);
     
   } catch (error) {
     console.error('Failed to create ticket:', error);
@@ -281,31 +295,53 @@ async function handleCancelTicket() {
 async function handleTicketUpdate(updatedTicketData) {
   const ticketId = updatedTicketData.WE_ID;
 
-  // สร้าง object ที่จะส่งไป API เฉพาะ field ที่อนุญาตให้แก้
+  // สร้าง object ที่จะส่งไป API
   const payload = {
-    WE_LICENSE: updatedTicketData.WE_LICENSE
+    WE_LICENSE: updatedTicketData.WE_LICENSE,
   };
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}`, {
+      // V V V V V V V V V V V V V V V V V V V V V
+      // ใส่เนื้อหาที่ถูกต้องกลับเข้ามาที่นี่
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      // ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^
     });
 
-    if (!response.ok) throw new Error('Failed to update ticket');
+    if (!response.ok) {
+      throw new Error('Failed to update ticket');
+    }
 
     alert('แก้ไขข้อมูลสำเร็จ!');
-    closeModal(); // ปิด Modal
-
-    // โหลดข้อมูลตารางใหม่เพื่อแสดงผลที่อัปเดต
-    await fetchOpenTickets(selectedDate.value);
+    
+    // เรียกใช้ฟังก์ชัน refresh
+    await refreshTicketData(ticketId);
     
   } catch (error) {
     console.error('Error updating ticket:', error);
     alert('เกิดข้อผิดพลาดในการแก้ไขข้อมูล');
   }
 }
+
+async function refreshTicketData(ticketId) {
+  // ปิด Modal ก่อน
+  closeModal(); 
+
+  // รอสักครู่เพื่อให้ UI ตอบสนอง
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+  // โหลดข้อมูลตารางหลักใหม่
+  await Promise.all([
+      fetchOpenTickets(selectedDate.value),
+      fetchCompletedTickets(selectedDate.value)
+  ]);
+  
+  // เปิด Modal ของบัตรใบเดิมขึ้นมาใหม่ เพื่อให้เห็นข้อมูลที่อัปเดต
+  await showTicketDetails(ticketId);
+}
+
 </script>
 
 <template>
@@ -315,7 +351,7 @@ async function handleTicketUpdate(updatedTicketData) {
         <!-- ส่วนแสดงน้ำหนัก Real-time -->
         <div class="weight-display-container">
           <div class="weight-display">
-            <span>{{ currentWeight }}</span>
+            <span :style="{ fontSize: weightFontSize }">{{ currentWeight }}</span>
           </div>
         </div>
 
@@ -364,10 +400,6 @@ async function handleTicketUpdate(updatedTicketData) {
                 placeholder="กรอกทะเบียนรถ..."
                 required
               >
-            </div>
-            <div class="form-group">
-              <label>น้ำหนักชั่งเข้า (จากตาชั่ง)</label>
-              <div class="weight-preview">{{ currentWeight }} กก.</div>
             </div>
             <button type="submit" :disabled="isCreatingTicket">
               {{ isCreatingTicket ? 'กำลังบันทึก...' : 'บันทึกการชั่งเข้า' }}
@@ -466,11 +498,11 @@ async function handleTicketUpdate(updatedTicketData) {
     
     <!-- Modal Component สำหรับแสดงรายละเอียด -->
     <TicketDetailModal 
-      :visible="isModalVisible" 
-      :ticket="detailTicket"
-      @close="closeModal"
-      @weigh-out="handleWeighOut"
-      @ticket-updated="handleTicketUpdate"
+    :visible="isModalVisible" 
+    :ticket="detailTicket"
+    @close="closeModal"
+    @weigh-out="handleWeighOut"
+    @ticket-updated="refreshTicketData(detailTicket.WE_ID)"
     />
   </div>
 </template>
@@ -481,7 +513,7 @@ async function handleTicketUpdate(updatedTicketData) {
 /* =============================================== */
 /* src/assets/main.css */
 :root {
-    --primary-color: #42b883;
+    --primary-color: #000000; /* สีที่ต้องการ */
     --secondary-color: #35495e;
     --bg-color: #f0f2f5;
     --text-color: #2c3e50;
@@ -567,12 +599,18 @@ main {
 .weight-display {
   font-size: 7rem;
   font-weight: bold;
-  color: var(--primary-color);
+  color: #000000; /* เปลี่ยนสีฟ้อนที่นี่ */
   background-color: #eef7f3;
   padding: 1.5rem;
   border-radius: 8px;
   text-align: center; 
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+  line-height: 1;
 }
+
 .action-panel {
   display: flex;
   flex-direction: column;
@@ -763,4 +801,11 @@ th {
   font-size: 0.8rem;
   cursor: pointer;
 }
+
+.weight-display span {
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
 </style>

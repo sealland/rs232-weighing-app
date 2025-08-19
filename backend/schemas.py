@@ -62,3 +62,28 @@ class WeightTicketDetails(WeightTicket):
     items: List[WeightTicketItem] = []
 
 # -----------------------------
+
+# --- เพิ่ม Schema ใหม่สำหรับ 1 รายการใน Shipment Plan ---
+class ShipmentPlanItem(BaseModel):
+    VBELN: str
+    POSNR: str
+    AR_NAME: Optional[str] = None
+    MATNR: Optional[str] = None
+    ARKTX: Optional[str] = None
+    NTGEW: Optional[float] = None
+    VRKME: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+# ----------------------------------------------------
+
+# --- เพิ่ม Schema ใหม่สำหรับ 1 รายการที่จะสร้างใน TBL_WEIGHT_ITEM ---
+class WeightTicketItemCreate(BaseModel):
+    VBELN: str
+    POSNR: str
+    WE_MAT_CD: Optional[str] = None
+    WE_MAT: Optional[str] = None
+    WE_QTY: Optional[float] = None
+    WE_UOM: Optional[str] = None
+
+# -------------------------------------------------------------

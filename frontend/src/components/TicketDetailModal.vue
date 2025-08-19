@@ -3,6 +3,7 @@ import { ref, watch } from 'vue';
 // กำหนด props ที่ Component นี้จะรับเข้ามา
 // 'ticket' คือ object ข้อมูลบัตรชั่ง
 // 'visible' คือ boolean สำหรับควบคุมการแสดงผล
+const API_BASE_URL = 'http://localhost:8000';
 const props = defineProps({
   ticket: {
     type: Object,
@@ -24,9 +25,20 @@ const isEditing = ref(false);
 // editableTicket จะถูกสร้างขึ้นมาใหม่ทุกครั้งที่เข้าโหมดแก้ไข
 const editableLicense = ref(''); 
 
+const searchPlanId = ref(''); // เก็บค่า VBELN ที่จะค้นหา
+const searchResults = ref([]); // เก็บผลลัพธ์การค้นหา
+const searchLoading = ref(false); // สถานะ loading ตอนค้นหา
+const searchError = ref(null); // เก็บ error ตอนค้นหา
+const selectedPlanItems = ref([]);
+
 // ---- watcher -----
 watch(() => props.ticket, () => {
   isEditing.value = false;
+  // เคลียร์ค่าค้นหาทุกครั้งที่เปิด Modal ใหม่
+  searchPlanId.value = '';
+  searchResults.value = [];
+  searchError.value = null;
+  selectedPlanItems.value = [];
 });
 
 //funciton
@@ -50,6 +62,76 @@ function handleSaveChanges() {
 function cancelEdit() {
   // แค่ปิดโหมดแก้ไข ไม่ต้องทำอะไรกับข้อมูล
   isEditing.value = false;
+}
+
+async function handleAddSelectedItems() {
+  if (selectedPlanItems.value.length === 0 || !props.ticket) return;
+
+  const ticketId = props.ticket.WE_ID;
+  
+  // 1. แปลงข้อมูลจากผลการค้นหา (ShipmentPlanItem)
+  // ให้เป็นรูปแบบที่ API ต้องการ (WeightTicketItemCreate)
+  const itemsToCreate = selectedPlanItems.value.map(item => ({
+    VBELN: item.VBELN,
+    POSNR: item.POSNR,
+    WE_MAT_CD: item.MATNR, // สังเกต: field name ไม่เหมือนกัน
+    WE_MAT: item.ARKTX,    // สังเกต: field name ไม่เหมือนกัน
+    WE_QTY: item.NTGEW,    // สังเกต: field name ไม่เหมือนกัน
+    WE_UOM: item.VRKME     // สังเกต: field name ไม่เหมือนกัน
+  }));
+
+  // (เผื่อ Debug) แสดงข้อมูลที่จะส่งไป API
+  console.log("Sending to API:", itemsToCreate);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}/items`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(itemsToCreate),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || 'เกิดข้อผิดพลาดในการบันทึกรายการ');
+    }
+
+    alert('เพิ่มรายการสินค้าสำเร็จ!');
+    
+    // 2. ส่ง event กลับไปให้ App.vue เพื่อโหลดข้อมูลใหม่
+    emit('ticket-updated');
+
+  } catch (error) {
+    console.error('Failed to add items:', error);
+    alert(error.message);
+  }
+}
+
+async function handleSearchPlan() {
+  if (!searchPlanId.value.trim()) return;
+
+  searchLoading.value = true;
+  searchError.value = null;
+  searchResults.value = [];
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/shipment-plans/${searchPlanId.value.trim()}`);
+    if (!response.ok) {
+      throw new Error('ไม่พบข้อมูลแผนการจัดส่ง');
+    }
+    const data = await response.json();
+    if (data.length === 0) {
+      searchError.value = `ไม่พบข้อมูลสำหรับเลขที่เอกสาร: ${searchPlanId.value}`;
+    } else {
+      searchResults.value = data;
+    }
+  } catch (error) {
+    console.error('Failed to search plan:', error);
+    searchError.value = error.message;
+  } finally {
+    searchLoading.value = false;
+  }
 }
 </script>
 
@@ -132,6 +214,64 @@ function cancelEdit() {
                </tr>
             </tbody>
           </table>
+        </div>
+
+        <!-- V V V V V V V V V V V V V V V V V V V -->
+        <!-- เพิ่มส่วนค้นหา Shipment Plan ที่นี่ -->
+        <div class="shipment-plan-section">
+          <h4>เชื่อมโยงแผนขึ้นสินค้า</h4>
+          <div class="search-form">
+            <input 
+              type="text" 
+              v-model="searchPlanId" 
+              placeholder="กรอกเลขที่เอกสาร (VBELN)..."
+              @keyup.enter="handleSearchPlan"
+            >
+            <button class="search-button" @click="handleSearchPlan" :disabled="searchLoading">
+              {{ searchLoading ? 'กำลังค้นหา...' : 'ค้นหา' }}
+            </button>
+          </div>
+
+          <!-- ส่วนแสดงผลการค้นหา -->
+          <div v-if="searchError" class="search-error">{{ searchError }}</div>
+          <div v-if="searchResults.length > 0" class="search-results-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>เลือก</th>
+                  <th>รายการ</th>
+                  <th>รหัสสินค้า</th>
+                  <th>ชื่อสินค้า</th>
+                  <th>จำนวน</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in searchResults" :key="item.POSNR">
+                  <td>
+                    <input 
+                      type="checkbox" 
+                      :value="item" 
+                      v-model="selectedPlanItems"
+                    >
+                  </td>
+                  <td><input type="checkbox"></td>
+                  <td>{{ item.POSNR }}</td>
+                  <td>{{ item.MATNR }}</td>
+                  <td>{{ item.ARKTX }}</td>
+                  <td>{{ item.NTGEW }} {{ item.VRKME }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="add-items-footer">
+              <button 
+                @click="handleAddSelectedItems" 
+                :disabled="selectedPlanItems.length === 0"
+                class="add-items-button"
+              >
+                เพิ่ม {{ selectedPlanItems.length }} รายการไปยังบัตรชั่ง
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -335,5 +475,91 @@ th {
 
 .cancel-edit-button { 
   background-color: #757575; 
+}
+
+.add-items-footer {
+  padding: 1rem;
+  background-color: #f9fafb;
+  border-top: 1px solid #ddd;
+}
+.add-items-button {
+  width: 100%;
+  padding: 0.8rem;
+  color: white;
+  background-color: var(--primary-color);
+  border: none;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+.add-items-button:hover:not(:disabled) {
+  background-color: #36a474;
+}
+.add-items-button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+/* =============================================== */
+/* Modal Shipment Plan Section                     */
+/* =============================================== */
+.shipment-plan-section {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 2px solid #eee;
+}
+.shipment-plan-section h4 {
+  margin-top: 0;
+}
+.search-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.search-form input {
+  flex-grow: 1;
+  padding: 0.8rem; /* <-- ปรับขนาดให้เท่า input อื่นๆ */
+  font-size: 1rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-sizing: border-box; /* <-- เพิ่ม box-sizing */
+}
+
+/* --- Style ของปุ่มค้นหา (แบบเดียวกับปุ่มชั่งออก) --- */
+button.search-button {
+  /* นำ Style พื้นฐานของปุ่มใหญ่มาใช้ */
+  padding: 0.8rem 1.5rem;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  /* กำหนดสีพื้นหลัง */
+  background-color: var(--primary-color, #42b883); 
+}
+button.search-button:hover:not(:disabled) {
+  background-color: #36a474;
+}
+button.search-button:disabled {
+  background-color: #218838;
+  cursor: not-allowed;
+}
+/* ------------------------------------------- */
+
+.search-error {
+  color: var(--error-color);
+  background-color: #ffcdd2;
+  padding: 0.8rem;
+  border-radius: 4px;
+}
+.search-results-container {
+  max-height: 250px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 4px;
 }
 </style>
