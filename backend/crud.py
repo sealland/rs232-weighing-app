@@ -68,6 +68,7 @@ def create_ticket(db: Session, ticket: schemas.WeightTicketCreate):
         
     new_ticket_id = f"{id_prefix_for_today}{str(new_running_number).zfill(3)}"
     
+     # 1. สร้างบัตรหลัก (TBL_WEIGHT) ก่อน
     db_ticket = models.WeightTicket(
         WE_ID=new_ticket_id,
         WE_LICENSE=ticket.WE_LICENSE,
@@ -77,14 +78,36 @@ def create_ticket(db: Session, ticket: schemas.WeightTicketCreate):
         WE_TYPE='I',
         WE_VENDOR_CD=ticket.WE_VENDOR_CD,
         WE_VENDOR=ticket.WE_VENDOR,
+        # ข้อมูลชั่งแยก
         WE_DIREF=ticket.WE_DIREF,
         WE_MAT_CD=ticket.WE_MAT_CD,
         WE_MAT=ticket.WE_MAT
     )
-    
     db.add(db_ticket)
+    
+    # 2. ตรวจสอบว่ามีรายการ "ชั่งรวม" (items) ส่งมาด้วยหรือไม่
+    if ticket.items:
+        new_db_items = []
+        for item in ticket.items:
+            # สร้าง object สำหรับ TBL_WEIGHT_ITEM
+            db_item = models.WeightTicketItem(
+                WE_ID=new_ticket_id, # <-- ใช้ ID ของบัตรใหม่
+                VBELN=item.VBELN,
+                POSNR=item.POSNR,
+                WE_MAT_CD=item.WE_MAT_CD,
+                WE_MAT=item.WE_MAT,
+                WE_QTY=item.WE_QTY,
+                WE_UOM=item.WE_UOM,
+            )
+            new_db_items.append(db_item)
+        
+        # เพิ่มรายการทั้งหมดลง session
+        db.add_all(new_db_items)
+
+    # 3. Commit การเปลี่ยนแปลงทั้งหมด (ทั้ง TBL_WEIGHT และ TBL_WEIGHT_ITEM) ในครั้งเดียว
     db.commit()
     db.refresh(db_ticket)
+    
     return db_ticket
 
 # --- เพิ่มฟังก์ชันใหม่สำหรับอัปเดตการชั่งออก ---

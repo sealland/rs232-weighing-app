@@ -7,14 +7,31 @@ class WeightTicketBase(BaseModel):
     WE_LICENSE: str
     WE_WEIGHTIN: float
 
+# --- เพิ่ม Schema ใหม่สำหรับ 1 รายการที่จะสร้างใน TBL_WEIGHT_ITEM ---
+class WeightTicketItemCreate(BaseModel):
+    VBELN: str
+    POSNR: str
+    WE_MAT_CD: Optional[str] = None
+    WE_MAT: Optional[str] = None
+    WE_QTY: Optional[float] = None
+    WE_UOM: Optional[str] = None
+
+# -------------------------------------------------------------
+
 class WeightTicketCreate(BaseModel):
     WE_LICENSE: str
     WE_WEIGHTIN: float
     WE_VENDOR: Optional[str] = None
     WE_VENDOR_CD: Optional[str] = None
+    
+    # --- ข้อมูลสำหรับ "ชั่งแยก" ---
     WE_DIREF: Optional[str] = None
     WE_MAT_CD: Optional[str] = None
     WE_MAT: Optional[str] = None
+
+    # --- ข้อมูลสำหรับ "ชั่งรวม" ---
+    # รับ List ของ WeightTicketItemCreate เข้ามาได้
+    items: Optional[List[WeightTicketItemCreate]] = None
     
 class WeightTicketUpdateWeighOut(BaseModel):
     WE_WEIGHTOUT: float
@@ -78,21 +95,13 @@ class ShipmentPlanItem(BaseModel):
     ARKTX: Optional[str] = None
     NTGEW: Optional[float] = None
     VRKME: Optional[str] = None
+    LFIMG: Optional[float] = None
 
     class Config:
         from_attributes = True
 # ----------------------------------------------------
 
-# --- เพิ่ม Schema ใหม่สำหรับ 1 รายการที่จะสร้างใน TBL_WEIGHT_ITEM ---
-class WeightTicketItemCreate(BaseModel):
-    VBELN: str
-    POSNR: str
-    WE_MAT_CD: Optional[str] = None
-    WE_MAT: Optional[str] = None
-    WE_QTY: Optional[float] = None
-    WE_UOM: Optional[str] = None
 
-# -------------------------------------------------------------
 # --- เพิ่ม Schema ใหม่สำหรับ 1 รายการในคิวรถ ---
 class CarVisit(BaseModel):
     SEQ: str

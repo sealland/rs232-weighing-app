@@ -65,6 +65,7 @@ class ShipmentPlan(Base_scale):
     ARKTX = Column(String, nullable=True) # ชื่อสินค้า
     NTGEW = Column(Float, nullable=True)  # น้ำหนัก/จำนวน
     VRKME = Column(String, nullable=True) # หน่วยนับ
+    LFIMG = Column(Float, nullable=True)
 
 
 # ---------------------------------------------
