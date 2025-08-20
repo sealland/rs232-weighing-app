@@ -372,7 +372,6 @@ async function handleSearchPlan() {
       <!-- ==================== FOOTER ==================== -->
       <div class="modal-footer" v-if="ticket">
         <!-- ... (ส่วน Footer เหมือนเดิม) ... -->
-        <button v-if="!ticket.WE_WEIGHTOUT && !isEditing" class="weigh-out-button" @click="emit('weigh-out')">บันทึกน้ำหนักชั่งออก</button>
         <div class="edit-actions">
           <button v-if="!isEditing" @click="startEditing" class="edit-button">แก้ไขข้อมูล</button>
           <template v-else>

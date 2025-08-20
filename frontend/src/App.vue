@@ -34,8 +34,20 @@ const isCancellingTicket = ref(false)
 
 // --- Computed Property ---
 const selectedTicketObject = computed(() => {
+  // 1. ถ้าไม่มีการเลือก ก็ไม่ต้องทำอะไร
   if (!selectedTicketId.value) return null;
-  return openTickets.value.find(t => t.WE_ID === selectedTicketId.value);
+
+  // 2. ค้นหาในตาราง 'กำลังดำเนินการ' ก่อน
+  let ticket = openTickets.value.find(t => t.WE_ID === selectedTicketId.value);
+  if (ticket) {
+    return ticket; // ถ้าเจอ ให้ส่งค่ากลับทันที
+  }
+
+  // 3. ถ้าไม่เจอในตารางแรก ให้ไปค้นหาในตาราง 'เสร็จสิ้นแล้ว'
+  ticket = completedTickets.value.find(t => t.WE_ID === selectedTicketId.value);
+  
+  // 4. ส่งค่าที่เจอ (หรือ null ถ้าไม่เจอเลย) กลับไป
+  return ticket; 
 });
 
 // --- API & WebSocket Config ---
@@ -293,93 +305,112 @@ onMounted(async () => {
         <!-- ส่วนแสดงน้ำหนัก Real-time -->
         <div class="weight-display-container">
           <div class="weight-display">
-            <span :style="{ fontSize: weightFontSize }">{{ currentWeight }}</span>
+            <div class="weight-icon">⚖️</div>
+            <span :style="{ fontSize: 'clamp(2.5rem, 10vw, 4.5rem)' }">{{ currentWeight }}</span>
+            <div class="weight-unit">กิโลกรัม</div>
+          </div>
+          <div class="connection-status" :class="wsStatus.toLowerCase()">
+            <span class="status-icon">🔗</span>
+            <span class="status-text">{{ wsStatus }}</span>
           </div>
         </div>
 
         <!-- เส้นแบ่ง -->
         <hr class="divider">
+        
         <div class="create-ticket-panel">
           <button @click="openCreateTicketModal" class="create-ticket-button">
+            <span class="button-icon">➕</span>
             สร้างบัตรชั่งใหม่
           </button>
         </div>
 
-        <!-- ส่วน Action Panel -->
+        <!-- ========================================================== -->
+        <!-- ส่วน Action Panel (ปรับปรุงใหม่ทั้งหมด) -->
+        <!-- ========================================================== -->
         <div class="action-panel">
           <div class="selected-ticket-info">
-            <label>บัตรที่เลือก:</label>
+            <label>📋 บัตรที่เลือก:</label>
             <div v-if="selectedTicketObject" class="ticket-id-display">
-              {{ selectedTicketObject.WE_ID }} ({{ selectedTicketObject.WE_LICENSE }})
+              <span class="ticket-icon">🎫</span>
+              {{ selectedTicketObject.WE_ID }} 
+              <span class="license-text">({{ selectedTicketObject.WE_LICENSE }})</span>
             </div>
             <div v-else class="no-ticket-selected">
+              <span class="no-selection-icon">⚠️</span>
               - ยังไม่ได้เลือก -
             </div>
           </div>
-          <button 
-            class="weigh-out-button"
-            @click="handleWeighOut"
-            :disabled="!selectedTicketId || isUpdatingTicket"
-          >
-            {{ isUpdatingTicket ? 'กำลังบันทึก...' : 'บันทึกน้ำหนักชั่งออก' }}
-          </button>
-          <button 
-            class="cancel-button"
-            @click="handleCancelTicket"
-            :disabled="!selectedTicketId || isUpdatingTicket || isCancellingTicket"
-          >
-            {{ isCancellingTicket ? 'กำลังยกเลิก...' : 'ยกเลิกบัตรชั่ง' }}
-          </button>
-        </div>
 
-        <!-- เส้นแบ่ง -->
-        <hr class="divider">
-
-        <!-- ฟอร์มสร้างบัตรชั่งใหม่ -->
-        <div class="create-ticket-form">
-          <form @submit.prevent="handleCreateTicket">
-            <div class="form-group">
-              <label for="license-plate">ทะเบียนรถ</label>
-              <input 
-                id="license-plate"
-                type="text" 
-                v-model="newTicketLicense"
-                placeholder="กรอกทะเบียนรถ..."
-                required
-              >
-            </div>
-            <div class="form-group">
-              <label for="vendor-name">ชื่อลูกค้า</label>
-              <input id="vendor-name" type="text" v-model="newTicketVendor">
-            </div>
-            <div class="form-group">
-              <label for="material-name">ชื่อสินค้า (กรณีชั่งแยก)</label>
-              <input id="material-name" type="text" v-model="newTicketMaterial">
-            </div>
-            <button type="submit" :disabled="isCreatingTicket">
-              {{ isCreatingTicket ? 'กำลังบันทึก...' : 'บันทึกการชั่งเข้า' }}
+          <!-- แสดงปุ่มก็ต่อเมื่อมีการเลือกบัตรแล้ว -->
+          <div v-if="selectedTicketObject" class="action-buttons-grid">
+            
+            <!-- ปุ่มที่แสดงเสมอ -->
+            <button class="action-btn detail-btn" @click="showTicketDetails(selectedTicketId)">
+              <span class="button-icon">🔍</span>
+              ดูรายละเอียด
             </button>
-          </form>
+            <button 
+              class="action-btn cancel-btn"
+              @click="handleCancelTicket"
+              :disabled="isCancellingTicket"
+            >
+              <span class="button-icon">❌</span>
+              {{ isCancellingTicket ? 'กำลังยกเลิก...' : 'ยกเลิกบัตรชั่ง' }}
+            </button>
+
+            <!-- V V V V V V V V V V V V V V V V V V V V V V V V V V V V -->
+            <!-- ปุ่มที่แสดงตามเงื่อนไข -->
+            <template v-if="selectedTicketObject.WE_WEIGHTOUT">
+              <!-- กรณี: ชั่งออกไปแล้ว -->
+              <button 
+                class="action-btn continuous-btn"
+                @click="handleStartContinuousWeighing"
+              >
+                <span class="button-icon">🔄</span>
+                ชั่งต่อเนื่อง
+              </button>
+            </template>
+            <template v-else>
+              <!-- กรณี: ยังไม่ได้ชั่งออก -->
+              <button 
+                class="action-btn weigh-out-btn"
+                @click="handleWeighOut"
+                :disabled="isUpdatingTicket"
+              >
+                <span class="button-icon">📤</span>
+                {{ isUpdatingTicket ? 'กำลังบันทึก...' : 'บันทึกน้ำหนักชั่งออก' }}
+              </button>
+            </template>
+            <!-- ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ -->
+
+          </div>
         </div>
+        <!-- ========================================================== -->
       </div>
 
       <div class="right-panel card">
         <!-- Tabs สำหรับสลับมุมมอง -->
         <div class="date-filter-container">
-          <label for="date-filter">เลือกวันที่:</label>
+          <label for="date-filter">📅 เลือกวันที่:</label>
           <input type="date" id="date-filter" v-model="selectedDate">
         </div>
         <div class="tabs">
           <button :class="{ active: activeTab === 'inProgress' }" @click="activeTab = 'inProgress'">
+            <span class="tab-icon">⏳</span>
             กำลังดำเนินการ ({{ openTickets.length }})
           </button>
           <button :class="{ active: activeTab === 'completed' }" @click="activeTab = 'completed'">
+            <span class="tab-icon">✅</span>
             เสร็จสิ้นแล้ว ({{ completedTickets.length }})
           </button>
         </div>
 
         <!-- แสดงข้อความ Error ถ้ามี -->
-        <div v-if="apiError" class="error-message">{{ apiError }}</div>
+        <div v-if="apiError" class="error-message">
+          <span class="error-icon">🚨</span>
+          {{ apiError }}
+        </div>
 
         <!-- ส่วนแสดงตาราง -->
         <div class="table-container" v-else>
@@ -388,11 +419,11 @@ onMounted(async () => {
             <table>
               <thead>
                 <tr>
-                  <th>เลขที่บัตร</th>
-                  <th>ทะเบียนรถ</th>
-                  <th>ชื่อลูกค้า</th>
-                  <th>เวลาชั่งเข้า</th>
-                  <th>น้ำหนักชั่งเข้า (กก.)</th>
+                  <th>🎫 เลขที่บัตร</th>
+                  <th>🚗 ทะเบียนรถ</th>
+                  <th>👤 ชื่อลูกค้า</th>
+                  <th>⏰ เวลาชั่งเข้า</th>
+                  <th>⚖️ น้ำหนักชั่งเข้า (กก.)</th>
                 </tr>
               </thead>
               <tbody>
@@ -403,7 +434,9 @@ onMounted(async () => {
                   :class="{ 'clickable-row': true, 'active-row': selectedTicketId === ticket.WE_ID }"
                 >
                   <td>
-                    <button class="detail-btn" @click.stop="showTicketDetails(ticket.WE_ID)">ดู</button>
+                    <button class="detail-btn" @click.stop="showTicketDetails(ticket.WE_ID)">
+                      <span class="detail-icon">🔍</span>
+                    </button>
                     {{ ticket.WE_ID }}
                   </td>
                   <td>{{ ticket.WE_LICENSE }}</td>
@@ -412,7 +445,10 @@ onMounted(async () => {
                   <td>{{ ticket.WE_WEIGHTIN.toLocaleString('en-US') }}</td>
                 </tr>
                 <tr v-if="!apiError && openTickets.length === 0">
-                  <td colspan="5" style="text-align: center;">ไม่พบรายการ</td>
+                  <td colspan="5" class="empty-state">
+                    <span class="empty-icon">📭</span>
+                    ไม่พบรายการ
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -423,17 +459,24 @@ onMounted(async () => {
             <table>
               <thead>
                 <tr>
-                  <th>เลขที่บัตร</th>
-                  <th>ทะเบียนรถ</th>
-                  <th>ชื่อลูกค้า</th>
-                  <th>เวลาชั่งออก</th>
-                  <th>น้ำหนักสุทธิ (กก.)</th>
+                  <th>🎫 เลขที่บัตร</th>
+                  <th>🚗 ทะเบียนรถ</th>
+                  <th>👤 ชื่อลูกค้า</th>
+                  <th>⏰ เวลาชั่งออก</th>
+                  <th>⚖️ น้ำหนักสุทธิ (กก.)</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="ticket in completedTickets" :key="ticket.WE_ID" @click="showTicketDetails(ticket.WE_ID)" class="clickable-row">
+                <tr 
+                  v-for="ticket in completedTickets" 
+                  :key="ticket.WE_ID" 
+                  @click="selectTicket(ticket.WE_ID)"
+                  :class="{ 'clickable-row': true, 'active-row': selectedTicketId === ticket.WE_ID }"
+                >
                   <td>
-                    <button class="detail-btn" @click.stop="showTicketDetails(ticket.WE_ID)">ดู</button>
+                    <button class="detail-btn" @click.stop="showTicketDetails(ticket.WE_ID)">
+                      <span class="detail-icon">🔍</span>
+                    </button>
                     {{ ticket.WE_ID }}
                   </td>
                   <td>{{ ticket.WE_LICENSE }}</td>
@@ -442,7 +485,10 @@ onMounted(async () => {
                   <td>{{ ticket.WE_WEIGHTNET?.toLocaleString('en-US') || '0' }}</td>
                 </tr>
                 <tr v-if="!apiError && completedTickets.length === 0">
-                  <td colspan="5" style="text-align: center;">ไม่พบรายการของวันนี้</td>
+                  <td colspan="5" class="empty-state">
+                    <span class="empty-icon">📭</span>
+                    ไม่พบรายการของวันนี้
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -459,10 +505,12 @@ onMounted(async () => {
       @weigh-out="handleWeighOut"
       @ticket-updated="handleTicketUpdate"
     />
+    <!-- *** เพิ่ม Prop ใหม่ 'continuousData' เข้าไป *** -->
     <CreateTicketModal
       :visible="isCreateModalVisible"
       :initial-weight-in="initialWeightForNewTicket"
       :car-queue="carQueue"
+      :continuous-data="continuousWeighingData" 
       @close="isCreateModalVisible = false"
       @save="handleCreateTicket"
     />
@@ -473,17 +521,25 @@ onMounted(async () => {
 /* =============================================== */
 /* 1. CSS Variables & Global Styles              */
 /* =============================================== */
-/* src/assets/main.css */
 :root {
-    --primary-color: #000000; /* สีที่ต้องการ */
-    --secondary-color: #35495e;
-    --bg-color: #f0f2f5;
-    --text-color: #2c3e50;
+    --primary-color: #2563eb; /* สีน้ำเงินเข้ม */
+    --primary-hover: #1d4ed8;
+    --secondary-color: #64748b;
+    --success-color: #059669; /* สีเขียว */
+    --success-hover: #047857;
+    --warning-color: #d97706; /* สีส้ม */
+    --warning-hover: #b45309;
+    --danger-color: #dc2626; /* สีแดง */
+    --danger-hover: #b91c1c;
+    --info-color: #0891b2; /* สีฟ้า */
+    --info-hover: #0e7490;
+    --bg-color: #f8fafc;
+    --text-color: #1e293b;
     --card-bg: #ffffff;
-    --error-color: #e53935;
-    --danger-color: #f44336;
-    --danger-hover-color: #d32f2f;
-    --highlight-color: #d1ecf1;
+    --error-color: #dc2626;
+    --highlight-color: #dbeafe;
+    --border-color: #e2e8f0;
+    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
 }
 
 html, body, #app {
@@ -491,17 +547,48 @@ html, body, #app {
     padding: 0;
     box-sizing: border-box;
     height: 100%;
-    overflow: hidden; /* ป้องกัน scrollbar ที่ body */
-    background-color: #f0f2f5; /* ย้ายสีพื้นหลังมาไว้ที่นี่ */
-    font-family: sans-serif;
+    overflow: hidden;
+    background-color: var(--bg-color);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: var(--text-color);
 }
+
+/* Global button styles */
+button {
+  transition: all 0.2s ease-in-out;
+}
+
+button:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
 /* =============================================== */
 /* 2. Main Layout (โครงสร้างหลัก)                 */
 /* =============================================== */
 .app-container {
   display: flex;
   flex-direction: column;
-  height: 100vh; /* ทำให้แอปสูงเต็มหน้าจอ */
+  height: 100vh;
   background-color: var(--bg-color);
 }
 
@@ -517,7 +604,7 @@ main {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  width: 360px; 
+  width: 380px; 
   flex-shrink: 0;
   overflow-y: auto;
   padding-right: 10px;
@@ -536,41 +623,105 @@ main {
 .card {
   background-color: var(--card-bg);
   padding: 1.5rem;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border-color);
 }
 
 .divider {
   border: none;
-  border-top: 1px solid #eee;
+  border-top: 2px solid var(--border-color);
   margin: 0.5rem 0;
 }
 
 .error-message {
   color: var(--error-color);
-  background-color: #ffcdd2;
-  border: 1px solid var(--error-color);
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
   padding: 1rem;
-  border-radius: 4px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+}
+
+.error-icon {
+  font-size: 1.2rem;
 }
 
 /* =============================================== */
 /* 4. Left Panel Components                        */
 /* =============================================== */
 
+.weight-display-container {
+  position: relative;
+}
+
 .weight-display {
-  font-size: 7rem;
+  font-size: 6rem;
   font-weight: bold;
-  color: #000000; /* เปลี่ยนสีฟ้อนที่นี่ */
-  background-color: #eef7f3;
-  padding: 1.5rem;
-  border-radius: 8px;
+  color: var(--primary-color);
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  padding: 2rem;
+  border-radius: 16px;
   text-align: center; 
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
   overflow: hidden;
   line-height: 1;
+  border: 2px solid #bae6fd;
+  position: relative;
+}
+
+.weight-icon {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+  opacity: 0.8;
+}
+
+.weight-unit {
+  font-size: 1.2rem;
+  color: var(--secondary-color);
+  margin-top: 0.5rem;
+  font-weight: 500;
+}
+
+.connection-status {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+}
+
+.connection-status.connected {
+  color: var(--success-color);
+  background-color: #f0fdf4;
+}
+
+.connection-status.connecting,
+.connection-status.disconnected {
+  color: var(--warning-color);
+  background-color: #fffbeb;
+}
+
+.connection-status.connection-error {
+  color: var(--danger-color);
+  background-color: #fef2f2;
+}
+
+.status-icon {
+  font-size: 0.9rem;
 }
 
 .action-panel {
@@ -578,108 +729,163 @@ main {
   flex-direction: column;
   gap: 1rem;
 }
-/* เพิ่ม Style ใหม่ */
-.action-buttons {
-  display: flex;
-  gap: 0.5rem; /* ระยะห่างระหว่างปุ่ม */
-}
-/* Style สำหรับปุ่มยกเลิก */
-button.cancel-button {
-  background-color: #757575; /* สีเทา */
-}
-button.cancel-button:hover:not(:disabled) {
-  background-color: #616161;
-}
 
 .selected-ticket-info {
-  background-color: #f0f2f5;
-  padding: 0.8rem;
-  border-radius: 4px;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
 }
+
 .selected-ticket-info label {
-  font-weight: bold;
+  font-weight: 600;
   display: block;
   font-size: 0.9rem;
-  color: #666;
-}
-.ticket-id-display {
-  font-weight: bold;
-  font-size: 1.2rem;
-  color: var(--primary-color);
-}
-.no-ticket-selected {
-  font-style: italic;
-  color: #888;
-}
-.form-group {
-  margin-bottom: 1rem;
-}
-.form-group label {
-  display: block;
-  font-weight: bold;
+  color: var(--secondary-color);
   margin-bottom: 0.5rem;
 }
-.form-group input {
-  width: 100%;
-  padding: 0.8rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 1rem;
-  box-sizing: border-box;
-}
-.weight-preview {
-  font-size: 1.5rem;
-  font-weight: bold;
+
+.ticket-id-display {
+  font-weight: 600;
+  font-size: 1.1rem;
   color: var(--primary-color);
-  background-color: #f0f2f5;
+  background-color: #eff6ff;
   padding: 0.8rem;
-  border-radius: 4px;
-  text-align: right;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid #bfdbfe;
 }
 
-button.weigh-out-button {
-  background-color: var(--danger-color, #f44336);
-}
-button.weigh-out-button:hover:not(:disabled) {
-  background-color: var(--danger-hover-color, #d32f2f);
-}
-.create-ticket-form button[type="submit"] {
-  background-color: var(--primary-color, #42b883);
+.ticket-icon {
+  font-size: 1.2rem;
 }
 
-.create-ticket-form button[type="submit"]:hover:not(:disabled) {
-  background-color: #36a474;
+.license-text {
+  color: var(--secondary-color);
+  font-size: 0.9rem;
 }
 
-button.weigh-out-button,
-button.cancel-button {
-  width: 100%;
-  padding: 1rem;
-  color: white;
-  border: none;
-  border-radius: 4px;
+.no-ticket-selected {
+  font-style: italic;
+  color: var(--secondary-color);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  background-color: #f8fafc;
+  border-radius: 8px;
+  border: 1px dashed var(--border-color);
+}
+
+.no-selection-icon {
   font-size: 1.1rem;
-  font-weight: bold;
-  cursor: pointer;
-  transition: background-color 0.2s;
 }
-button:disabled {
-  background-color: #ccc;
+
+/* ======================================== */
+/*  Styles for the New Action Panel         */
+/* ======================================== */
+
+.action-buttons-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.action-btn {
+  width: 100%;
+  padding: 0.75rem 0.5rem;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.action-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
   cursor: not-allowed;
+  transform: none;
 }
-.create-ticket-form button[type="submit"] {
+
+.button-icon {
+  font-size: 1rem;
+}
+
+/* Detail Button (Blue) */
+.action-btn.detail-btn {
+  background: linear-gradient(135deg, var(--info-color) 0%, var(--info-hover) 100%);
+}
+
+.action-btn.detail-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--info-hover) 0%, #0c4a6e 100%);
+}
+
+/* Cancel Button (Gray) */
+.action-btn.cancel-btn {
+  background: linear-gradient(135deg, var(--secondary-color) 0%, #475569 100%);
+}
+
+.action-btn.cancel-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #475569 0%, #334155 100%);
+}
+
+/* Weigh-out Button (Green) */
+.action-btn.weigh-out-btn {
+  background: linear-gradient(135deg, var(--success-color) 0%, var(--success-hover) 100%);
+  grid-column: 1 / -1;
+}
+
+.action-btn.weigh-out-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--success-hover) 0%, #065f46 100%);
+}
+
+/* Continuous Weighing Button (Purple) */
+.action-btn.continuous-btn {
+  background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+  grid-column: 1 / -1;
+}
+
+.action-btn.continuous-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #6d28d9 0%, #5b21b6 100%);
+}
+
+.create-ticket-button {
   width: 100%;
   padding: 1rem;
   color: white;
   border: none;
-  border-radius: 4px;
+  border-radius: 8px;
   font-size: 1.1rem;
-  font-weight: bold;
+  font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.2s;
-  background-color: var(--primary-color, #42b883); /* <-- ยืนยันสีเขียวที่นี่ */
+  transition: all 0.2s ease-in-out;
+  background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-hover) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: var(--shadow);
 }
 
+.create-ticket-button:hover {
+  background: linear-gradient(135deg, var(--primary-hover) 0%, #1e40af 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px rgba(37, 99, 235, 0.3);
+}
 
 /* =============================================== */
 /* 5. Right Panel Components                       */
@@ -690,100 +896,182 @@ button:disabled {
   gap: 0.5rem;
   margin-bottom: 1rem;
   padding-bottom: 1rem;
-  border-bottom: 1px solid #eee;
+  border-bottom: 2px solid var(--border-color);
   flex-shrink: 0;
 }
+
 .date-filter-container label {
-  font-weight: bold;
+  font-weight: 600;
+  color: var(--text-color);
 }
+
 .date-filter-container input[type="date"] {
   padding: 0.5rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
   font-size: 1rem;
+  background-color: white;
+  transition: border-color 0.2s;
+}
+
+.date-filter-container input[type="date"]:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
 .tabs {
   display: flex;
-  border-bottom: 2px solid #ddd;
+  border-bottom: 2px solid var(--border-color);
   margin-bottom: 1rem;
   flex-shrink: 0;
 }
+
 .tabs button {
-  padding: 0.8rem 1.2rem;
+  padding: 1rem 1.5rem;
   border: none;
   background-color: transparent;
   cursor: pointer;
   font-size: 1rem;
-  color: #666;
+  color: var(--secondary-color);
   position: relative;
   top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease-in-out;
+  border-radius: 8px 8px 0 0;
 }
-.tabs button.active {
-  border-bottom: 2px solid var(--primary-color);
-  font-weight: bold;
+
+.tabs button:hover {
+  background-color: #f1f5f9;
   color: var(--primary-color);
+}
+
+.tabs button.active {
+  border-bottom: 3px solid var(--primary-color);
+  font-weight: 600;
+  color: var(--primary-color);
+  background-color: #eff6ff;
+}
+
+.tab-icon {
+  font-size: 1.1rem;
 }
 
 /* --- Table Styles --- */
 .table-container {
   flex-grow: 1;
   overflow-y: auto;
-  min-height: 0; /* <-- จุดแก้ไขสำคัญยังคงอยู่ */
+  min-height: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background-color: white;
 }
+
 table {
   width: 100%;
   border-collapse: collapse;
 }
+
 th, td {
-  padding: 0.8rem 1rem;
-  border-bottom: 1px solid #ddd;
+  padding: 1rem;
+  border-bottom: 1px solid var(--border-color);
   text-align: left;
   white-space: nowrap;
 }
+
 th {
-  background-color: #f9fafb;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
   position: sticky;
   top: 0;
+  font-weight: 600;
+  color: var(--text-color);
+  border-bottom: 2px solid var(--border-color);
 }
+
 .clickable-row {
   cursor: pointer;
-  transition: background-color 0.2s ease;
+  transition: all 0.2s ease-in-out;
 }
+
 .clickable-row:hover {
-  background-color: #f0f8ff;
+  background-color: #f8fafc;
+  transform: translateX(2px);
 }
+
 .active-row {
-  background-color: var(--highlight-color) !important;
-  font-weight: bold;
+  background: linear-gradient(135deg, var(--highlight-color) 0%, #bfdbfe 100%) !important;
+  font-weight: 600;
+  border-left: 4px solid var(--primary-color);
 }
+
 .detail-btn {
   margin-right: 0.5rem;
-  padding: 0.2rem 0.5rem;
+  padding: 0.3rem 0.6rem;
   font-size: 0.8rem;
   cursor: pointer;
-}
-
-.weight-display span {
-  display: block;
-  max-width: 100%;
-  white-space: nowrap;
-}
-
-.create-ticket-button {
-  width: 100%;
-  padding: 1rem;
+  background: linear-gradient(135deg, var(--info-color) 0%, var(--info-hover) 100%);
   color: white;
   border: none;
   border-radius: 4px;
-  font-size: 1.1rem;
-  font-weight: bold;
-  cursor: pointer;
-  transition: background-color 0.2s;
-  background-color: var(--primary-color);
-}
-.create-ticket-button:hover {
-  background-color: #36a474;
+  transition: all 0.2s ease-in-out;
 }
 
+.detail-btn:hover {
+  background: linear-gradient(135deg, var(--info-hover) 0%, #0c4a6e 100%);
+  transform: scale(1.05);
+}
+
+.detail-icon {
+  font-size: 0.8rem;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: var(--secondary-color);
+  font-style: italic;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.empty-icon {
+  font-size: 1.5rem;
+}
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+  .left-panel {
+    width: 320px;
+  }
+  
+  .weight-display {
+    font-size: 4rem;
+    padding: 1.5rem;
+  }
+}
+
+@media (max-width: 768px) {
+  main {
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+  }
+  
+  .left-panel {
+    width: 100%;
+  }
+  
+  .action-buttons-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .weight-display {
+    font-size: 3rem;
+    padding: 1rem;
+  }
+}
 </style>
