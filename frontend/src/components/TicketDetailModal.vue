@@ -1,72 +1,160 @@
 <script setup>
-import { ref, watch } from 'vue';
-// กำหนด props ที่ Component นี้จะรับเข้ามา
-// 'ticket' คือ object ข้อมูลบัตรชั่ง
-// 'visible' คือ boolean สำหรับควบคุมการแสดงผล
-const API_BASE_URL = 'http://localhost:8000';
+import { ref, watch, computed } from 'vue';
+
 const props = defineProps({
-  ticket: {
-    type: Object,
-    default: null
-  },
-  visible: {
-    type: Boolean,
-    default: false
+  ticket: { type: Object, default: null },
+  visible: { type: Boolean, default: false }
+});
+const emit = defineEmits(['close', 'weigh-out', 'ticket-updated']);
+
+// --- State Management for Edit Mode ---
+const isEditing = ref(false);
+const editableData = ref({});
+
+// State for "แก้ไข/เพิ่มรายการสินค้า"
+const planIdToSearch = ref('');
+const searchResults = ref([]);
+const newItemsToReplace = ref([]);
+const searchLoading = ref(false);
+const searchError = ref(null);
+// --- เพิ่ม Computed Property ใหม่ ---
+const hasSelectedSearchResults = computed(() => {
+  // ตรวจสอบว่าใน searchResults มี item ไหนที่มี selected: true บ้างหรือไม่
+  return searchResults.value.some(item => item.selected);
+});
+// ---------------------------------
+
+// --- Watcher ---
+watch(() => props.visible, (isVisible) => {
+  if (isVisible) {
+    isEditing.value = false;
+    planIdToSearch.value = '';
+    searchResults.value = [];
+    newItemsToReplace.value = [];
+    searchError.value = null;
   }
 });
 
-// กำหนด event ที่ Component นี้จะส่งกลับไปหาแม่
-// 'close' คือ event ที่จะถูกส่งออกไปเมื่อผู้ใช้กดปิด
-const emit = defineEmits(['close', 'weigh-out', 'update-ticket']);
-
-// --- State Management (ปรับปรุงใหม่ทั้งหมด) ---
-const isEditing = ref(false);
-
-// editableTicket จะถูกสร้างขึ้นมาใหม่ทุกครั้งที่เข้าโหมดแก้ไข
-const editableLicense = ref(''); 
-const editableVendor = ref('');
-const editableMaterial = ref('');
-
-const searchPlanId = ref(''); // เก็บค่า VBELN ที่จะค้นหา
-const searchResults = ref([]); // เก็บผลลัพธ์การค้นหา
-const searchLoading = ref(false); // สถานะ loading ตอนค้นหา
-const searchError = ref(null); // เก็บ error ตอนค้นหา
-const selectedPlanItems = ref([]);
-
-// ---- watcher -----
-watch(() => props.ticket, () => {
-  isEditing.value = false;
-  // เคลียร์ค่าค้นหาทุกครั้งที่เปิด Modal ใหม่
-  searchPlanId.value = '';
+// --- Functions ---
+// --- เพิ่มฟังก์ชันใหม่ ---
+function toggleSelectAllResults(event) {
+  const isChecked = event.target.checked;
+  searchResults.value.forEach(item => item.selected = isChecked);
+}
+// --------------------
+// --- ฟังก์ชัน `addSelectedToNewItems` (ยังคงถูกต้อง) ---
+function addSelectedToNewItems() {
+  const selected = searchResults.value.filter(item => item.selected);
+  for (const item of selected) {
+    if (!newItemsToReplace.value.some(newItem => newItem.VBELN === item.VBELN && newItem.POSNR === item.POSNR)) {
+      // ตอนเพิ่มลงตะกร้า จะมี editable_qty ติดไปด้วยโดยอัตโนมัติ
+      newItemsToReplace.value.push(item);
+    }
+  }
   searchResults.value = [];
-  searchError.value = null;
-  selectedPlanItems.value = [];
-});
-
-//funciton
+  planIdToSearch.value = '';
+}
 
 function startEditing() {
-  // เมื่อเริ่มแก้ไข ให้ copy ทะเบียนรถปัจจุบันมาเก็บไว้
-  editableLicense.value = props.ticket.WE_LICENSE;
-  editableVendor.value = props.ticket.WE_VENDOR;
-  editableMaterial.value = props.ticket.WE_MAT;
+  // 1. ตรวจสอบก่อนว่ามี ticket data จริงๆ
+  if (!props.ticket) return;
+
+  // 2. Copy ข้อมูลหลัก
+  editableData.value = {
+    WE_LICENSE: props.ticket.WE_LICENSE,
+    WE_VENDOR: props.ticket.WE_VENDOR,
+    WE_QTY: props.ticket.WE_QTY,
+  };
+  
+  // 3. Copy รายการสินค้า (ถ้ามี) ไปใส่ตะกร้า พร้อมสร้าง editable_qty
+  if (props.ticket.items && Array.isArray(props.ticket.items)) {
+    newItemsToReplace.value = props.ticket.items.map(item => ({
+        ...item, 
+        // สร้าง key ที่สอดคล้องกับผลการค้นหา
+        MATNR: item.WE_MAT_CD, 
+        ARKTX: item.WE_MAT,
+        LFIMG: item.WE_QTY,
+        VRKME: item.WE_UOM,
+        // --- จุดแก้ไขที่สำคัญที่สุด ---
+        // สร้าง property 'editable_qty' โดยใช้ค่าจาก WE_QTY เดิม
+        editable_qty: item.WE_QTY 
+    }));
+  } else {
+    newItemsToReplace.value = [];
+  }
+  
+  // 4. ตั้งค่า isEditing เป็น true เป็นสิ่งสุดท้าย
   isEditing.value = true;
+}
+function cancelEdit() {
+  isEditing.value = false;
+}
+
+function updateItemQty(index, event) {
+  // 1. ดึงค่าตัวเลขจาก input
+  const newQty = parseInt(event.target.value, 10);
+  
+  // 2. ตรวจสอบว่าเป็นตัวเลขที่ถูกต้องหรือไม่
+  if (!isNaN(newQty) && newItemsToReplace.value[index]) {
+    // 3. อัปเดตค่าใน Array โดยตรง
+    newItemsToReplace.value[index].editable_qty = newQty;
+  }
+}
+function removeFromNewItems(index) {
+  newItemsToReplace.value.splice(index, 1);
 }
 
 function handleSaveChanges() {
-  // สร้าง object ข้อมูลที่แก้ไขแล้วเพื่อส่งกลับ
-  const updatedData = {
-    ...props.ticket, // เอาข้อมูลเดิมทั้งหมดมา
-    WE_LICENSE: editableLicense.value, // เอาทะเบียนรถที่แก้ไขใหม่ทับเข้าไป
-    WE_VENDOR: editableVendor.value,
-    WE_MAT: editableMaterial.value
-  };
-  emit('ticket-updated', updatedData);
-  // isEditing จะถูก reset โดย watcher เมื่อข้อมูลอัปเดต
-}
+  if (!props.ticket) {
+    console.error("handleSaveChanges failed: props.ticket is null");
+    return;
+  }
 
-function cancelEdit() {
-  // แค่ปิดโหมดแก้ไข ไม่ต้องทำอะไรกับข้อมูล
+  // 2. ตรวจสอบสถานะว่าเป็น "ชั่งรวม" หรือไม่
+  const isNowCombined = newItemsToReplace.value.length > 0;
+
+  // 3. รวบรวมข้อมูลหลัก (mainData)
+  const mainDataPayload = {
+    WE_LICENSE: editableData.value.WE_LICENSE,
+    WE_VENDOR: editableData.value.WE_VENDOR,
+    WE_QTY: isNowCombined ? null : editableData.value.WE_QTY,
+    WE_DIREF: isNowCombined ? 'ชั่งรวม' : (props.ticket.items.length === 0 ? props.ticket.WE_DIREF : 'ชั่งแยก'),
+    WE_MAT_CD: isNowCombined ? 'ชั่งรวม' : (props.ticket.items.length === 0 ? props.ticket.WE_MAT_CD : null),
+    WE_MAT: isNowCombined ? 'ชั่งรวม' : (props.ticket.items.length === 0 ? props.ticket.WE_MAT : 'สินค้าชั่งแยก'),
+  };
+
+  // 4. รวบรวมรายการสินค้าใหม่ (newItems)
+  const newItemsPayload = isNowCombined
+    ? newItemsToReplace.value.map(item => ({
+        VBELN: item.VBELN,
+        POSNR: item.POSNR,
+        WE_MAT_CD: item.MATNR,
+        WE_MAT: item.ARKTX,
+        WE_QTY: item.editable_qty,
+        WE_UOM: item.VRKME
+      }))
+    : null;
+
+  // 5. สร้าง object สุดท้าย
+  const finalPayload = {
+    mainData: mainDataPayload,
+    newItems: newItemsPayload,
+  };
+
+  const objectToEmit = { 
+    payload: finalPayload, 
+    ticketId: props.ticket.WE_ID // <-- เราต้องการค่านี้
+  };
+ // ========================== DEBUG HERE ==========================
+ console.log('--- [Modal] ตรวจสอบข้อมูลก่อน Emit ---');
+  console.log('1. Checking props.ticket:', JSON.parse(JSON.stringify(props.ticket)));
+  console.log('2. Checking props.ticket.WE_ID:', props.ticket.WE_ID);
+  console.log('3. Final object to emit:', JSON.parse(JSON.stringify(objectToEmit)));
+  // ================================================================
+
+  // ส่ง object ที่เตรียมไว้
+  emit('ticket-updated', objectToEmit);
+  
   isEditing.value = false;
 }
 
@@ -115,25 +203,33 @@ async function handleAddSelectedItems() {
 }
 
 async function handleSearchPlan() {
-  if (!searchPlanId.value.trim()) return;
+  if (!planIdToSearch.value.trim()) {
+    return;
+  }
 
   searchLoading.value = true;
   searchError.value = null;
   searchResults.value = [];
+  const API_BASE_URL = 'http://localhost:8000';
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/shipment-plans/${searchPlanId.value.trim()}`);
+    const response = await fetch(`${API_BASE_URL}/api/shipment-plans/${planIdToSearch.value.trim()}`);
     if (!response.ok) {
       throw new Error('ไม่พบข้อมูลแผนการจัดส่ง');
     }
+    
     const data = await response.json();
     if (data.length === 0) {
-      searchError.value = `ไม่พบข้อมูลสำหรับเลขที่เอกสาร: ${searchPlanId.value}`;
+      searchError.value = `ไม่พบข้อมูลสำหรับเลขที่เอกสาร: ${planIdToSearch.value}`;
     } else {
-      searchResults.value = data;
+      // เพิ่ม property 'selected' สำหรับ Checkbox
+      searchResults.value = data.map(item => ({ 
+        ...item, 
+        selected: false,
+        editable_qty: item.LFIMG // ใช้ LFIMG เป็นค่าเริ่มต้น
+      }));
     }
   } catch (error) {
-    console.error('Failed to search plan:', error);
     searchError.value = error.message;
   } finally {
     searchLoading.value = false;
@@ -144,168 +240,141 @@ async function handleSearchPlan() {
 <template>
   <div v-if="visible" class="modal-overlay" @click.self="emit('close')">
     <div class="modal-content">
+      <!-- ==================== HEADER ==================== -->
       <div class="modal-header">
         <h3>รายละเอียดบัตรชั่ง: {{ ticket?.WE_ID }}</h3>
         <button class="close-button" @click="emit('close')">&times;</button>
       </div>
 
+      <!-- ==================== BODY ==================== -->
       <div class="modal-body" v-if="ticket">
-        <!-- ข้อมูลหลักของบัตร -->
+        <!-- Part 1: Main Details -->
         <div class="detail-grid">
           <div>
             <strong>ทะเบียนรถ:</strong>
-            <!-- แสดง input เมื่ออยู่ในโหมดแก้ไข -->
-            <input v-if="isEditing" type="text" v-model="editableLicense" class="edit-input">
-            <!-- แสดงข้อความปกติ -->
+            <input v-if="isEditing" type="text" v-model="editableData.WE_LICENSE" class="edit-input">
             <span v-else>{{ ticket.WE_LICENSE }}</span>
           </div>
           <div class="customer-info">
             <strong>ลูกค้า:</strong>
-            <input v-if="isEditing" type="text" v-model="editableVendor" class="edit-input">
+             <input v-if="isEditing" type="text" v-model="editableData.WE_VENDOR" class="edit-input">
             <span v-else>{{ ticket.WE_VENDOR_CD }} - {{ ticket.WE_VENDOR }}</span>
           </div>
           <div><strong>เวลาชั่งเข้า:</strong> {{ new Date(ticket.WE_TIMEIN).toLocaleString('th-TH') }}</div>
           <div><strong>เวลาชั่งออก:</strong> {{ ticket.WE_TIMEOUT ? new Date(ticket.WE_TIMEOUT).toLocaleString('th-TH') : '-' }}</div>
-          <div><strong>น้ำหนักชั่งเข้า:</strong> {{ ticket.WE_WEIGHTIN?.toLocaleString('en-US') }} กก.</div>
-          <div><strong>น้ำหนักชั่งออก:</strong> {{ ticket.WE_WEIGHTOUT?.toLocaleString('en-US') || '0' }} กก.</div>
-          <div class="net-weight"><strong>น้ำหนักสุทธิ:</strong> {{ ticket.WE_WEIGHTNET?.toLocaleString('en-US') || '0' }} กก.</div>
-          <div><strong>ผู้ใช้งาน:</strong> {{ ticket.WE_USER || '-' }}</div>
+        </div>
+        
+        <hr class="divider">
+
+        <!-- Part 2: Items Area (โครงสร้างใหม่) -->
+
+        <!-- ===== Header ของรายการสินค้า (รวมหัวข้อและช่องค้นหา) ===== -->
+        <div class="items-header">
+          <h4>รายการสินค้า</h4>
+          <!-- ช่องค้นหาจะปรากฏที่นี่ (ด้านขวา) เฉพาะตอน Edit Mode -->
+          <div v-if="isEditing" class="search-form-inline">
+            <input type="text" v-model="planIdToSearch" placeholder="กรอกเลขที่เอกสารเพื่อค้นหา..." @keyup.enter="handleSearchPlan">
+            <button type="button" @click="handleSearchPlan" :disabled="searchLoading" class="search-button">ค้นหา</button>
+          </div>
         </div>
 
-        <!-- รายการสินค้า -->
-        <h4>รายการสินค้า</h4>
+        <!-- ===== ส่วนแสดงผลการค้นหา (จะปรากฏใต้ Header เฉพาะตอน Edit Mode) ===== -->
+        <div v-if="isEditing" class="search-results-area">
+            <div v-if="searchError" class="search-error">{{ searchError }}</div>
+            <div v-if="searchResults.length > 0" class="search-results-wrapper">
+              <div class="search-results-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th><input type="checkbox" @change="toggleSelectAllResults($event)"></th>
+                      <th>สินค้า</th>
+                      <th>จำนวน</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="item in searchResults" :key="item.POSNR">
+                      <td><input type="checkbox" v-model="item.selected"></td>
+                      <td>{{ item.POSNR }} - {{ item.ARKTX }}</td>
+                      <td>{{ item.LFIMG }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <button type="button" @click="addSelectedToNewItems" :disabled="!hasSelectedSearchResults" class="add-to-list-button">
+                + เพิ่มรายการที่เลือก
+              </button>
+            </div>
+        </div>
+
+        <!-- ===== ตารางรายการสินค้า (เหมือนเดิม) ===== -->
         <div class="items-table-container">
-          <!-- กรณีที่ 1: ชั่งรวม (มีข้อมูลใน ticket.items) -->
-          <table v-if="ticket.items && ticket.items.length > 0">
+          <table>
             <thead>
-              <tr>
-                <th>เลขที่เอกสาร</th>
-                <th>ลำดับ</th>
-                <th>รหัสสินค้า</th>
-                <th>ชื่อสินค้า</th>
-                <th>จำนวน</th>
-                <th>หน่วยนับ</th>
+            <tr>
+              <!-- กำหนดความกว้างให้พอดีกับข้อมูล -->
+              <th style="width: 160px;">เอกสาร/ลำดับ</th> 
+              
+              <!-- ไม่ต้องกำหนดความกว้าง เพื่อให้ขยายเต็มที่ -->
+              <th>สินค้า</th> 
+              
+              <!-- ลดขนาดลงให้พอดีกับหลักหมื่น -->
+              <th style="width: 120px;">จำนวน</th> 
+              
+              <!-- กำหนดความกว้างให้พอดีกับหน่วยสั้นๆ -->
+              <th style="width: 80px;">หน่วย</th> 
+              
+              <!-- ปุ่มลบ ขนาดเท่าเดิม -->
+              <th v-if="isEditing" style="width: 50px;"></th> 
+            </tr>
+          </thead>
+            <!-- โหมดแสดงผล (View Mode) -->
+            <tbody v-if="!isEditing">
+              <tr v-if="!ticket.items || ticket.items.length === 0">
+                <td>{{ ticket.WE_DIREF }}</td>
+                <td>{{ ticket.WE_MAT_CD }} - {{ ticket.WE_MAT }}</td>
+                <td>{{ ticket.WE_QTY?.toLocaleString('en-US') }}</td>
+                <td>{{ ticket.WE_UOM }}</td>
               </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(item, index) in ticket.items" :key="index">
-                <td>{{ item.VBELN }}</td>
-                <td>{{ item.POSNR }}</td>
-                <td>{{ item.WE_MAT_CD }}</td>
-                <td>{{ item.WE_MAT }}</td>
-                <td>{{ item.WE_QTY }}</td>
+              <tr v-else v-for="item in ticket.items" :key="`${item.VBELN}-${item.POSNR}`">
+                <td>{{ item.VBELN }}/{{ item.POSNR }}</td>
+                <td>{{ item.WE_MAT_CD }} - {{ item.WE_MAT }}</td>
+                <td>{{ item.WE_QTY?.toLocaleString('en-US') }}</td>
                 <td>{{ item.WE_UOM }}</td>
               </tr>
             </tbody>
-          </table>
-          
-          <!-- กรณีที่ 2: ชั่งแยก (ไม่มีข้อมูลใน ticket.items) -->
-          <table v-else>
-             <thead>
-              <tr>
-                <th>เลขที่เอกสาร</th>
-                <th>รหัสสินค้า</th>
-                <th>ชื่อสินค้า</th>
-                <th>จำนวน</th>
-                <th>หน่วยนับ</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>{{ ticket.WE_DIREF }}</td>
-                <td>{{ ticket.WE_MAT_CD }}</td>
-                <td>
-                  <!-- ทำให้ชื่อสินค้า (ชั่งแยก) แก้ไขได้ -->
-                  <input v-if="isEditing" type="text" v-model="editableMaterial" class="edit-input">
-                  <span v-else>{{ ticket.WE_MAT }}</span>
+            <!-- โหมดแก้ไข (Edit Mode) -->
+            <tbody v-else>
+              <tr v-if="newItemsToReplace.length === 0">
+                <td colspan="5" class="empty-list">
+                  -- ยังไม่มีรายการ -- <br>
+                  <small>(กรุณาค้นหาและเพิ่มรายการจากด้านบน)</small>
                 </td>
-                <td>{{ ticket.WE_QTY }}</td>
-                <td>{{ ticket.WE_UOM }}</td>
+              </tr>
+              <tr v-else v-for="(item, index) in newItemsToReplace" :key="`${item.VBELN}-${item.POSNR}`">
+                <td>{{ item.VBELN }}/{{ item.POSNR }}</td>
+                <td>{{ item.MATNR }} - {{ item.ARKTX }}</td>
+                <td>
+                  <input type="number" v-model.number="item.editable_qty" class="qty-input">
+                </td>
+                <td>{{ item.VRKME }}</td>
+                <td class="action-cell">
+                  <button type="button" @click="removeFromNewItems(index)" class="remove-btn">&times;</button>
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
-
-        <!-- V V V V V V V V V V V V V V V V V V V -->
-        <!-- เพิ่มส่วนค้นหา Shipment Plan ที่นี่ -->
-        <div class="shipment-plan-section">
-          <h4>เชื่อมโยงแผนขึ้นสินค้า</h4>
-          <div class="search-form">
-            <input 
-              type="text" 
-              v-model="searchPlanId" 
-              placeholder="กรอกเลขที่เอกสาร (VBELN)..."
-              @keyup.enter="handleSearchPlan"
-            >
-            <button class="search-button" @click="handleSearchPlan" :disabled="searchLoading">
-              {{ searchLoading ? 'กำลังค้นหา...' : 'ค้นหา' }}
-            </button>
-          </div>
-
-          <!-- ส่วนแสดงผลการค้นหา -->
-          <div v-if="searchError" class="search-error">{{ searchError }}</div>
-          <div v-if="searchResults.length > 0" class="search-results-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>เลือก</th>
-                  <th>รายการ</th>
-                  <th>รหัสสินค้า</th>
-                  <th>ชื่อสินค้า</th>
-                  <th>จำนวน</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="item in searchResults" :key="item.POSNR">
-                  <td>
-                    <input 
-                      type="checkbox" 
-                      :value="item" 
-                      v-model="selectedPlanItems"
-                    >
-                  </td>
-                  <td><input type="checkbox"></td>
-                  <td>{{ item.POSNR }}</td>
-                  <td>{{ item.MATNR }}</td>
-                  <td>{{ item.ARKTX }}</td>
-                  <td>{{ item.NTGEW }} {{ item.VRKME }}</td>
-                </tr>
-              </tbody>
-            </table>
-            <div class="add-items-footer">
-              <button 
-                @click="handleAddSelectedItems" 
-                :disabled="selectedPlanItems.length === 0"
-                class="add-items-button"
-              >
-                เพิ่ม {{ selectedPlanItems.length }} รายการไปยังบัตรชั่ง
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
+      
+      <!-- Loading State -->
+      <div v-else class="loading">กำลังโหลดข้อมูล...</div>
 
-      <div v-else class="loading">
-        กำลังโหลดข้อมูล...
-      </div>
-
-      <!-- Footer ของ Modal -->
+      <!-- ==================== FOOTER ==================== -->
       <div class="modal-footer" v-if="ticket">
-        <!-- ปุ่มชั่งออก จะแสดงเมื่อยังไม่ชั่งออก และไม่ได้อยู่ในโหมดแก้ไข -->
-        <button 
-          v-if="!ticket.WE_WEIGHTOUT && !isEditing" 
-          class="weigh-out-button"
-          @click="emit('weigh-out')"
-        >
-          บันทึกน้ำหนักชั่งออก
-        </button>
-
-        <!-- ส่วนของปุ่มแก้ไข (แก้ไขให้ถูกต้อง) -->
+        <!-- ... (ส่วน Footer เหมือนเดิม) ... -->
+        <button v-if="!ticket.WE_WEIGHTOUT && !isEditing" class="weigh-out-button" @click="emit('weigh-out')">บันทึกน้ำหนักชั่งออก</button>
         <div class="edit-actions">
-          <!-- โหมดปกติ: แสดงปุ่ม "แก้ไข" -->
           <button v-if="!isEditing" @click="startEditing" class="edit-button">แก้ไขข้อมูล</button>
-          
-          <!-- โหมดแก้ไข: แสดงปุ่ม "ยกเลิก" และ "บันทึกการแก้ไข" -->
           <template v-else>
             <button @click="cancelEdit" class="cancel-edit-button">ยกเลิก</button>
             <button @click="handleSaveChanges" class="save-button">บันทึกการแก้ไข</button>
@@ -370,6 +439,24 @@ async function handleSearchPlan() {
   text-align: center;
   padding: 3rem;
   color: #888;
+}
+.final-list-container .items-table-container {
+  max-height: 250px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+.action-cell {
+  text-align: center;
+  width: 50px;
+}
+.qty-input {
+  width: 100%; /* ให้ input เต็มความกว้างของ td */
+  padding: 0.4rem;
+  text-align: right;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box; /* สำคัญ */
 }
 
 /* =============================================== */
@@ -571,5 +658,200 @@ button.search-button:disabled {
   overflow-y: auto;
   border: 1px solid #ddd;
   border-radius: 4px;
+}
+/* =============================================== */
+/* Modal Edit Items Section                        */
+/* =============================================== */
+.edit-items-section {
+  margin-top: 1.5rem;
+  /* จัด Layout ด้วย CSS Grid */
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* แบ่งเป็น 2 คอลัมน์เท่าๆ กัน */
+  gap: 1.5rem;
+  align-items: start; /* จัดให้ส่วนบนของแต่ละคอลัมน์ตรงกัน */
+}
+.edit-items-section .divider {
+  grid-column: 1 / -1; /* ทำให้เส้นคั่นยาวเต็มความกว้าง */
+  margin: 0;
+}
+
+.final-list-container, .add-items-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.final-list-container label, .add-items-container label {
+  font-weight: bold;
+  font-size: 1rem;
+}
+
+.empty-list {
+  color: #888;
+  font-style: italic;
+  padding: 1rem;
+  background-color: #f9f9f9;
+  text-align: center;
+  border-radius: 4px;
+  border: 1px dashed #ddd;
+}
+.empty-list small {
+  font-size: 0.8rem;
+}
+
+.final-list-container ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 250px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+.final-list-container li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.8rem;
+  border-bottom: 1px solid #eee;
+  font-size: 0.9rem;
+}
+.final-list-container li:last-child {
+  border-bottom: none;
+}
+.remove-btn {
+  background: none;
+  border: none;
+  color: var(--danger-color);
+  font-size: 1.5rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 0.5rem;
+}
+
+.search-form-inline {
+  display: flex;
+  gap: 0.5rem;
+}
+.search-form-inline input {
+  flex-grow: 1;
+  /* เพิ่ม Style พื้นฐานให้ครบ */
+  padding: 0.8rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+  box-sizing: border-box;
+}
+.search-form-inline button {
+  flex-shrink: 0;
+  /* เพิ่ม Style ของปุ่มให้ครบ */
+  padding: 0.8rem 1rem;
+  border: none;
+  border-radius: 4px;
+  background-color: var(--primary-color);
+  color: white;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+.search-form-inline button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+.search-results-wrapper {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  overflow: hidden; /* ซ่อนมุมของ table */
+}
+.search-results-container {
+  max-height: 200px;
+  overflow-y: auto;
+}
+.add-to-list-button {
+  width: 100%;
+  padding: 0.6rem;
+  font-size: 0.9rem;
+  background-color: var(--secondary-color);
+  color: white;
+  border: none;
+  cursor: pointer;
+  border-top: 1px solid #ddd;
+}
+.add-to-list-button:disabled {
+  background-color: #ccc;
+}
+
+/* ทำให้ตารางผลการค้นหามี scroll ของตัวเองได้ */
+.search-results-container {
+  max-height: 250px;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+}
+
+.items-header {
+  display: flex;
+  justify-content: space-between; /* ดัน H4 ไปซ้ายสุด และ search ไปขวาสุด */
+  align-items: center;            /* จัดให้อยู่กึ่งกลางแนวตั้ง */
+  margin-bottom: 0.75rem;         /* ระยะห่างก่อนถึงส่วนผลการค้นหา หรือตาราง */
+}
+
+.items-header h4 {
+  margin: 0; /* ลบ margin เดิมของ h4 เพื่อให้ align-items ทำงานได้สวยงาม */
+}
+
+/* --- CSS สำหรับพื้นที่แสดงผลการค้นหา (ใหม่) --- */
+.search-results-area {
+    margin-bottom: 1.5rem; /* ระยะห่างก่อนถึงตารางหลัก */
+}
+
+/* ทำให้ placeholder ใน input ค้นหามีขนาดเล็กลงและสีจางลง */
+.search-form-inline input::placeholder {
+  font-size: 0.9em;
+  color: #9ca3af;
+}
+
+/* จัดสไตล์ให้ wrapper ของผลการค้นหา */
+.search-results-wrapper {
+  margin-top: 0.75rem; /* ลดระยะห่างด้านบนลงเล็กน้อย */
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1rem;
+  background-color: #f9fafb;
+}
+
+/* ทำให้ placeholder ใน input ค้นหามีขนาดเล็กลงและสีจางลง */
+.search-form-inline input::placeholder {
+  font-size: 0.9em;
+  color: #9ca3af;
+}
+
+/* จัดสไตล์ให้ wrapper ของผลการค้นหา */
+.search-results-wrapper {
+  margin-top: 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1rem;
+  background-color: #f9fafb;
+}
+
+/* ทำให้ตารางผลการค้นหามี scroll ของตัวเอง */
+.search-results-container {
+  max-height: 200px; /* ลดความสูงลงเล็กน้อย */
+  overflow-y: auto;
+  margin-bottom: 1rem;
+}
+
+/* ปรับปุ่ม 'เพิ่มรายการ' ให้ดูดีขึ้น */
+.add-to-list-button {
+  width: 100%;
+  padding: 0.6rem;
+  font-weight: 600;
+  /* ... สามารถเพิ่มสไตล์อื่นๆ ได้ตามต้องการ ... */
+}
+
+.divider {
+  border: 0;
+  height: 1px;
+  background-color: #e5e7eb;
+  margin: 1.5rem 0;
 }
 </style>

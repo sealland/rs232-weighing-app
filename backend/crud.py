@@ -245,3 +245,44 @@ def get_available_car_queue(db: Session):
         models.CarVisit.Ship_point == 'P8'
     ).order_by(models.CarVisit.SEQ).all()
 # ------------------------------------
+
+# --- เพิ่มฟังก์ชันใหม่สำหรับ "แทนที่" รายการสินค้า ---
+def replace_ticket_items(db: Session, ticket_id: str, items: List[schemas.WeightTicketItemCreate]):
+    """
+    ลบรายการสินค้าเก่าทั้งหมดของบัตรชั่ง แล้วเพิ่มรายการใหม่เข้าไปแทน
+    """
+    # 1. ค้นหาบัตรชั่งหลักเพื่อให้แน่ใจว่ามีอยู่จริง
+    db_ticket = db.query(models.WeightTicket).filter(models.WeightTicket.WE_ID == ticket_id).first()
+    if not db_ticket:
+        return None
+
+    # 2. ลบรายการสินค้าเก่าทั้งหมดที่ผูกกับ ticket_id นี้
+    # synchronize_session=False เป็น option ที่แนะนำเมื่อมีการลบหลายแถว
+    db.query(models.WeightTicketItem).filter(models.WeightTicketItem.WE_ID == ticket_id).delete(synchronize_session=False)
+
+    # 3. สร้าง object ของรายการใหม่ (เหมือนใน create_ticket)
+    new_db_items = []
+    for item in items:
+        db_item = models.WeightTicketItem(
+            WE_ID=ticket_id,
+            VBELN=item.VBELN,
+            POSNR=item.POSNR,
+            WE_MAT_CD=item.WE_MAT_CD,
+            WE_MAT=item.WE_MAT,
+            WE_QTY=item.WE_QTY,
+            WE_UOM=item.WE_UOM,
+        )
+        new_db_items.append(db_item)
+        
+    # 4. เพิ่มรายการใหม่ทั้งหมดลง session
+    if new_db_items:
+        db.add_all(new_db_items)
+
+    # 5. Commit การเปลี่ยนแปลงทั้งหมด (ทั้ง DELETE และ INSERT)
+    db.commit()
+    
+    # 6. คืนค่าบัตรชั่งที่อัปเดตแล้ว
+    # เราต้อง refresh object เดิมเพื่อให้ SQLAlchemy ไปดึงข้อมูล .items ใหม่จากฐานข้อมูล
+    db.refresh(db_ticket)
+    return db_ticket
+# --------------------------------------------------

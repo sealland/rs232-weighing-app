@@ -1,63 +1,48 @@
 <script setup>
+import { ref, onMounted, computed, watch } from 'vue'
 import TicketDetailModal from './components/TicketDetailModal.vue'
-import CreateTicketModal from './components/CreateTicketModal.vue' 
-import { ref, onMounted, computed, watch } from 'vue' 
+import CreateTicketModal from './components/CreateTicketModal.vue'
 
-
+// --- State Management ---
 const currentWeight = ref('0')
 const openTickets = ref([])
 const completedTickets = ref([])
 const apiError = ref(null)
 const wsStatus = ref('Connecting...')
 const activeTab = ref('inProgress')
-const carQueue = ref([]);
-
 const selectedDate = ref(new Date().toISOString().split('T')[0]);
 
-// State สำหรับ Inline Editing
-const selectedTicketId = ref(null) // <-- State ใหม่: เก็บ ID ของบัตรที่ถูกเลือก
+// State for car queue
+const carQueue = ref([]);
 
-// State สำหรับ Modal (ยังคงใช้สำหรับดูรายละเอียด)
-const detailTicket = ref(null)     // <-- เปลี่ยนชื่อจาก selectedTicket
+// State for Inline Editing
+const selectedTicketId = ref(null)
+
+// State for Detail Modal
+const detailTicket = ref(null)
 const isModalVisible = ref(false)
 
-// State สำหรับ Loading
-const isCreatingTicket = ref(false)
-const isUpdatingTicket = ref(false)
-const isCancellingTicket = ref(false) 
-
+// State for Create Modal
 const isCreateModalVisible = ref(false);
 const initialWeightForNewTicket = ref(0);
 
-// --- Computed Property ใหม่ ---
-// หาข้อมูลของบัตรที่ถูกเลือกจาก openTickets
+// State for Loading Actions
+const isCreatingTicket = ref(false)
+const isUpdatingTicket = ref(false)
+const isCancellingTicket = ref(false)
+
+
+// --- Computed Property ---
 const selectedTicketObject = computed(() => {
   if (!selectedTicketId.value) return null;
   return openTickets.value.find(t => t.WE_ID === selectedTicketId.value);
 });
 
-const weightFontSize = computed(() => {
-  const len = (currentWeight.value || '').toString().length;
-  if (len <= 6) return '6.7rem';
-  if (len <= 8) return '6rem';
-  if (len <= 10) return '5rem';
-  return '4rem';
-});
+// --- API & WebSocket Config ---
+const API_BASE_URL = 'http://localhost:8000';
+const WEBSOCKET_URL = 'ws://localhost:8765';
 
-
-const API_BASE_URL = 'http://localhost:8000'
-
-// --- WebSocket Configuration ---
-// URL ของ Agent ที่เรารันไว้ (ws://127.0.0.1:8765)
-const WEBSOCKET_URL = 'ws://localhost:8765'
-
-// --- Functions ---
-
-/**
- * ฟังก์ชันสำหรับดึงข้อมูลบัตรชั่งที่ยังไม่เสร็จจาก Backend API
- */
-
-
+// --- Functions: Data Fetching ---
 async function fetchOpenTickets(dateStr) {
   try {
     const response = await fetch(`${API_BASE_URL}/api/tickets/?target_date=${dateStr}`)
@@ -68,7 +53,6 @@ async function fetchOpenTickets(dateStr) {
     apiError.value = "ไม่สามารถดึงข้อมูลบัตรชั่ง 'กำลังดำเนินการ' ได้"
   }
 }
-
 async function fetchCompletedTickets(dateStr) {
   try {
     const response = await fetch(`${API_BASE_URL}/api/tickets/completed?target_date=${dateStr}`)
@@ -76,25 +60,7 @@ async function fetchCompletedTickets(dateStr) {
     completedTickets.value = await response.json()
   } catch (error) {
     console.error("Could not fetch completed tickets:", error)
-    apiError.value = "ยังไม่มีรายการชั่งชั่งเข้า"
-  }
-}
-
-async function showTicketDetails(ticket_id) {
-  selectTicket(ticket_id);
-  // ไม่ต้องเปิด Modal หรือเคลียร์ค่าที่นี่ก่อน
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticket_id}`);
-    if (!response.ok) throw new Error(`Ticket not found`);
-    
-    // เมื่อ fetch สำเร็จแล้ว ค่อยมาอัปเดต state และเปิด Modal
-    detailTicket.value = await response.json();
-    isModalVisible.value = true; // เปิด Modal ที่นี่
-
-  } catch (error) {
-    console.error("Failed to fetch ticket details:", error);
-    alert("ไม่สามารถดึงข้อมูลรายละเอียดได้");
-    // ไม่ต้องทำอะไรกับ Modal ถ้า fetch ล้มเหลว
+    apiError.value = "ไม่สามารถดึงข้อมูลบัตรชั่ง 'เสร็จสิ้นแล้ว' ได้"
   }
 }
 async function fetchCarQueue() {
@@ -104,106 +70,76 @@ async function fetchCarQueue() {
     carQueue.value = await response.json();
   } catch (error) {
     console.error(error);
-    // อาจจะแสดง error ให้ผู้ใช้เห็นในอนาคต
   }
 }
+function connectWebSocket() {
+  const ws = new WebSocket(WEBSOCKET_URL);
+  ws.onopen = () => { wsStatus.value = "Connected"; };
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.hasOwnProperty('weight')) {
+        currentWeight.value = parseInt(data.weight).toLocaleString('en-US');
+      }
+    } catch (e) { console.error("Error parsing WebSocket message:", e); }
+  };
+  ws.onclose = () => {
+    wsStatus.value = "Disconnected. Retrying...";
+    setTimeout(connectWebSocket, 3000);
+  };
+  ws.onerror = (error) => {
+    console.error("WebSocket error:", error);
+    wsStatus.value = "Connection Error";
+    ws.close();
+  };
+}
 
-
+// --- Functions: Modal Control & Ticket Actions ---
+async function openCreateTicketModal() {
+  await fetchCarQueue();
+  const weightValue = parseInt(currentWeight.value.replace(/,/g, ''), 10);
+  if (isNaN(weightValue)) {
+     alert('ค่าน้ำหนักไม่ถูกต้อง');
+     return;
+  }
+  initialWeightForNewTicket.value = weightValue;
+  isCreateModalVisible.value = true;
+}
+async function showTicketDetails(ticket_id) {
+  selectTicket(ticket_id);
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticket_id}`);
+    if (!response.ok) throw new Error(`Ticket not found`);
+    detailTicket.value = await response.json();
+    isModalVisible.value = true;
+  } catch (error) {
+    console.error("Failed to fetch ticket details:", error);
+    alert("ไม่สามารถดึงข้อมูลรายละเอียดได้");
+  }
+}
 function closeModal() {
   isModalVisible.value = false
   detailTicket.value = null
 }
-
-// --- ฟังก์ชันใหม่สำหรับ Inline Editing ---
 function selectTicket(ticketId) {
-  // ถ้าคลิกซ้ำที่แถวเดิม ให้ยกเลิกการเลือก
   if (selectedTicketId.value === ticketId) {
     selectedTicketId.value = null;
   } else {
     selectedTicketId.value = ticketId;
   }
 }
-
-
-/**
- * ฟังก์ชันสำหรับเชื่อมต่อ WebSocket
- */
-function connectWebSocket() {
-  const ws = new WebSocket(WEBSOCKET_URL)
-
-  ws.onopen = () => {
-    console.log("WebSocket connected.")
-    wsStatus.value = "Connected"
-  }
-
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-      if (data.hasOwnProperty('weight')) {
-        // จัดรูปแบบตัวเลขให้มี comma
-        currentWeight.value = parseInt(data.weight).toLocaleString('en-US')
-      }
-    } catch (e) {
-      console.error("Error parsing WebSocket message:", e)
-    }
-  }
-
-  ws.onclose = () => {
-    console.log("WebSocket disconnected. Reconnecting...")
-    wsStatus.value = "Disconnected. Retrying..."
-    // พยายามเชื่อมต่อใหม่ทุกๆ 3 วินาที
-    setTimeout(connectWebSocket, 3000)
-  }
-
-  ws.onerror = (error) => {
-    console.error("WebSocket error:", error)
-    wsStatus.value = "Connection Error"
-    ws.close() // การปิดจะทำให้ onclose ทำงานและพยายามเชื่อมต่อใหม่
-  }
-}
-
-watch(selectedDate, async (newDate) => {
-  apiError.value = null; // เคลียร์ error เก่า
-  // เมื่อวันที่เปลี่ยน ให้โหลดข้อมูลของทั้งสองตารางใหม่
-  await Promise.all([
-    fetchOpenTickets(newDate),
-    fetchCompletedTickets(newDate)
-  ]);
-});
-
-// --- Lifecycle Hook ---
-// onMounted คือฟังก์ชันที่จะถูกเรียกใช้งานแค่ 1 ครั้ง
-// หลังจากที่หน้าเว็บถูกสร้างขึ้นมาเสร็จสมบูรณ์
-async function fetchInitialData() {
-  await Promise.all([
-    fetchOpenTickets(selectedDate.value),
-    fetchCompletedTickets(selectedDate.value)
-  ]);
-}
-
-onMounted(() => {
-  fetchInitialData(); // <-- เรียกฟังก์ชันใหม่
-  connectWebSocket();
-});
-
-// --- เพิ่มฟังก์ชันใหม่สำหรับสร้างบัตรชั่ง ---
 async function handleCreateTicket(ticketData) {
-  isCreatingTicket.value = true; // ยังคงใช้ isCreatingTicket สำหรับ loading
-
+  isCreatingTicket.value = true;
   try {
-    // ใช้ ticketData ที่ส่งมาจาก Modal
     const response = await fetch(`${API_BASE_URL}/api/tickets/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ticketData), 
+      body: JSON.stringify(ticketData),
     });
-
     if (!response.ok) throw new Error('Server error!');
-
     alert('สร้างบัตรชั่งใหม่สำเร็จ!');
-    isCreateModalVisible.value = false; // ปิด Modal
+    isCreateModalVisible.value = false;
     await fetchOpenTickets(selectedDate.value);
-    
   } catch (error) {
     console.error('Failed to create ticket:', error);
     alert('เกิดข้อผิดพลาดในการสร้างบัตรชั่ง');
@@ -211,38 +147,28 @@ async function handleCreateTicket(ticketData) {
     isCreatingTicket.value = false;
   }
 }
-
-// --- ปรับปรุง handleWeighOut ---
 async function handleWeighOut() {
-  // ตรวจสอบว่ามีบัตรถูกเลือกอยู่หรือไม่
   if (!selectedTicketId.value) {
     alert('กรุณาเลือกบัตรชั่งที่ต้องการบันทึก');
     return;
   }
-
   const weightOutValue = parseInt(currentWeight.value.replace(/,/g, ''), 10);
   if (isNaN(weightOutValue)) {
      alert('ค่าน้ำหนักปัจจุบันไม่ถูกต้อง');
      return;
   }
-
   isUpdatingTicket.value = true;
   const ticketIdToUpdate = selectedTicketId.value;
-
   try {
     const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketIdToUpdate}/weigh-out`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ WE_WEIGHTOUT: weightOutValue }),
     });
-
     if (!response.ok) throw new Error('Server error during weigh-out!');
-
     alert('บันทึกน้ำหนักชั่งออกสำเร็จ!');
-    selectedTicketId.value = null; // ยกเลิกการเลือกบัตร
-
-    await Promise.all([ fetchOpenTickets(), fetchCompletedTickets() ]);
-
+    selectedTicketId.value = null;
+    await Promise.all([ fetchOpenTickets(selectedDate.value), fetchCompletedTickets(selectedDate.value) ]);
   } catch (error) {
     console.error('Failed to update weigh-out:', error);
     alert('เกิดข้อผิดพลาดในการบันทึกน้ำหนักชั่งออก');
@@ -255,30 +181,19 @@ async function handleCancelTicket() {
     alert('กรุณาเลือกบัตรชั่งที่ต้องการยกเลิก');
     return;
   }
-
-  // ยืนยันเพื่อความปลอดภัย
   if (!confirm(`คุณต้องการยกเลิกบัตรชั่งเลขที่ ${selectedTicketId.value} ใช่หรือไม่?`)) {
-    return; // ถ้าผู้ใช้กด Cancel ให้ออกจากฟังก์ชัน
+    return;
   }
-
   isCancellingTicket.value = true;
   const ticketIdToCancel = selectedTicketId.value;
-
   try {
     const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketIdToCancel}/cancel`, {
-      method: 'DELETE', // <-- ใช้ method DELETE
+      method: 'DELETE',
     });
-
-    if (!response.ok) {
-      throw new Error('Server error during cancellation!');
-    }
-
+    if (!response.ok) throw new Error('Server error during cancellation!');
     alert('ยกเลิกบัตรชั่งสำเร็จ!');
-    selectedTicketId.value = null; // ยกเลิกการเลือกบัตร
-
-    // โหลดข้อมูลตาราง "กำลังดำเนินการ" ใหม่อย่างเดียวก็พอ
+    selectedTicketId.value = null;
     await fetchOpenTickets(selectedDate.value);
-
   } catch (error) {
     console.error('Failed to cancel ticket:', error);
     alert('เกิดข้อผิดพลาดในการยกเลิกบัตรชั่ง');
@@ -286,73 +201,89 @@ async function handleCancelTicket() {
     isCancellingTicket.value = false;
   }
 }
-// ---------------------------------------------
-async function handleTicketUpdate(updatedTicketData) {
-  const ticketId = updatedTicketData.WE_ID;
+async function handleTicketUpdate(eventData) {
+  // ดึงค่ามาจาก eventData ที่ส่งมาใหม่
+  const updatePayload = eventData.payload;
+  const ticketId = eventData.ticketId;
 
-  // สร้าง object ที่จะส่งไป API
-  const payload = {
-    WE_LICENSE: updatedTicketData.WE_LICENSE,
-  };
+  // --- จุดตรวจสอบใหม่ ---
+  if (!ticketId) {
+    console.error("Update failed: No ticketId was provided.");
+    alert("เกิดข้อผิดพลาด: ไม่พบ ID ของบัตรชั่ง");
+    return;
+  }
+  
+  console.log(`--- [App.vue] Starting update for ticket ID: ${ticketId} ---`);
+  
+  isUpdatingTicket.value = true;
+  let hasError = false;
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}`, {
-      // V V V V V V V V V V V V V V V V V V V V V
-      // ใส่เนื้อหาที่ถูกต้องกลับเข้ามาที่นี่
+    // --- ส่วนที่ 1: อัปเดตข้อมูลหลัก (ใช้ ticketId ที่รับมา) ---
+    console.log("Sending main data update (PATCH):", updatePayload.mainData);
+    const mainResponse = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}`, { // <-- ใช้ ticketId
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      // ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^
+      body: JSON.stringify(updatePayload.mainData),
     });
 
-    if (!response.ok) {
-      throw new Error('Failed to update ticket');
+    if (!mainResponse.ok) {
+      hasError = true;
+      console.error('Failed to update main ticket data:', await mainResponse.text());
+      alert('เกิดข้อผิดพลาดในการอัปเดตข้อมูลหลัก');
     }
 
-    alert('แก้ไขข้อมูลสำเร็จ!');
+    // --- ส่วนที่ 2: ถ้าไม่มี Error และมีรายการใหม่ให้แทนที่ ให้เรียก API "แทนที่" ---
+    if (!hasError && updatePayload.newItems) {
+      console.log("Sending new items to replace (PUT):", updatePayload.newItems);
+      const itemsResponse = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}/items`, { // <-- ใช้ ticketId
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatePayload.newItems),
+      });
+
+      if (!itemsResponse.ok) {
+        hasError = true;
+        console.error('Failed to replace ticket items:', await itemsResponse.text());
+        alert('เกิดข้อผิดพลาดในการแทนที่รายการสินค้า');
+      }
+    }
     
-    // เรียกใช้ฟังก์ชัน refresh
-    await refreshTicketData(ticketId);
+    // --- ถ้าทุกอย่างสำเร็จ ---
+    if (!hasError) {
+      alert('แก้ไขข้อมูลสำเร็จ!');
+      await refreshTicketData(ticketId); // รีเฟรชข้อมูลทั้งหมด
+    }
     
   } catch (error) {
-    console.error('Error updating ticket:', error);
-    alert('เกิดข้อผิดพลาดในการแก้ไขข้อมูล');
+    console.error('Error during ticket update process:', error);
+    alert('เกิดข้อผิดพลาดร้ายแรงในการแก้ไขข้อมูล');
+  } finally {
+    isUpdatingTicket.value = false;
   }
 }
-
 async function refreshTicketData(ticketId) {
-  // ปิด Modal ก่อน
   closeModal(); 
-
-  // รอสักครู่เพื่อให้ UI ตอบสนอง
   await new Promise(resolve => setTimeout(resolve, 100));
-
-  // โหลดข้อมูลตารางหลักใหม่
   await Promise.all([
       fetchOpenTickets(selectedDate.value),
       fetchCompletedTickets(selectedDate.value)
   ]);
-  
-  // เปิด Modal ของบัตรใบเดิมขึ้นมาใหม่ เพื่อให้เห็นข้อมูลที่อัปเดต
   await showTicketDetails(ticketId);
 }
 
-// --- เพิ่มฟังก์ชันใหม่สำหรับเปิด Modal ---
-async function openCreateTicketModal() {
-  // 1. โหลดข้อมูลคิวล่าสุดทุกครั้งที่เปิด
-  await fetchCarQueue();
-
-  // 2. อ่านค่าน้ำหนักปัจจุบัน
-  const weightValue = parseInt(currentWeight.value.replace(/,/g, ''), 10);
-  if (isNaN(weightValue)) {
-     alert('ค่าน้ำหนักไม่ถูกต้อง');
-     return;
-  }
-  initialWeightForNewTicket.value = weightValue;
-  isCreateModalVisible.value = true;
-}
-// ------------------------------------
-
+// --- Watcher & Lifecycle Hook ---
+watch(selectedDate, async (newDate) => {
+  apiError.value = null;
+  selectedTicketId.value = null;
+  await fetchOpenTickets(newDate);
+  await fetchCompletedTickets(newDate);
+});
+onMounted(async () => {
+  await fetchOpenTickets(selectedDate.value);
+  await fetchCompletedTickets(selectedDate.value);
+  connectWebSocket();
+});
 </script>
 
 <template>
@@ -522,11 +453,11 @@ async function openCreateTicketModal() {
     
     <!-- Modal Component สำหรับแสดงรายละเอียด -->
     <TicketDetailModal 
-    :visible="isModalVisible" 
-    :ticket="detailTicket"
-    @close="closeModal"
-    @weigh-out="handleWeighOut"
-    @ticket-updated="refreshTicketData(detailTicket.WE_ID)"
+      :ticket="detailTicket"
+      :visible="isModalVisible"
+      @close="closeModal"
+      @weigh-out="handleWeighOut"
+      @ticket-updated="handleTicketUpdate"
     />
     <CreateTicketModal
       :visible="isCreateModalVisible"

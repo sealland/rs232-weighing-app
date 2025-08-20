@@ -28,7 +28,8 @@ class WeightTicketCreate(BaseModel):
     WE_DIREF: Optional[str] = None
     WE_MAT_CD: Optional[str] = None
     WE_MAT: Optional[str] = None
-
+    WE_QTY: Optional[int] = None
+    WE_UOM: Optional[str] = None
     # --- ข้อมูลสำหรับ "ชั่งรวม" ---
     # รับ List ของ WeightTicketItemCreate เข้ามาได้
     items: Optional[List[WeightTicketItemCreate]] = None
@@ -43,6 +44,7 @@ class WeightTicketUpdate(BaseModel):
     WE_DIREF: Optional[str] = None
     WE_MAT_CD: Optional[str] = None
     WE_MAT: Optional[str] = None
+    WE_QTY: Optional[float] = None # <-- เพิ่มบรรทัดนี้
 
 # Schema สำหรับการอ่านข้อมูลจากฐานข้อมูลมาแสดงผล
 class WeightTicket(WeightTicketBase):

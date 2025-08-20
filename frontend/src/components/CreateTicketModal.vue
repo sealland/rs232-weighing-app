@@ -1,7 +1,8 @@
-<!-- frontend/src/components/CreateTicketModal.vue -->
+// frontend/src/components/CreateTicketModal.vue
 <script setup>
 import { ref, watch, computed } from 'vue';
 
+// --- Props & Emits ---
 const props = defineProps({
   visible: { type: Boolean, default: false },
   initialWeightIn: { type: Number, default: 0 },
@@ -9,42 +10,45 @@ const props = defineProps({
 });
 const emit = defineEmits(['close', 'save']);
 
-// --- State Management ---
+// --- State Management (Refactored for Simplicity) ---
 const selectedQueueSeq = ref('');
-const weighingType = ref('combined');
+
+// State for Searching
 const planIdToSearch = ref('');
-const searchResults = ref([]);
-const selectedCombinedItems = ref([]);
-const finalCombinedItems = ref([]); // "ตะกร้า"
-const selectedSeparateItem = ref(null);
 const searchLoading = ref(false);
 const searchError = ref(null);
+const searchResults = ref([]); // Stores items from API with 'selected' property
 
+// State for the "Shopping Cart"
+const finalCombinedItems = ref([]); // The one and only list for items to be saved
+
+// --- Computed Properties ---
 const selectedQueueObject = computed(() => {
   if (!selectedQueueSeq.value) return null;
   return props.carQueue.find(q => q.SEQ === selectedQueueSeq.value);
 });
 
+// *** NEW & IMPORTANT *** This computed property enables/disables the 'Add to Cart' button
+const hasSelectedSearchResults = computed(() => {
+  // Checks if there is AT LEAST ONE item in searchResults where 'selected' is true
+  return searchResults.value.some(item => item.selected);
+});
+
+
+// --- Watchers ---
+// Watcher to reset the modal state when it becomes visible
 watch(() => props.visible, (isVisible) => {
   if (isVisible) {
     selectedQueueSeq.value = '';
-    weighingType.value = 'combined';
     planIdToSearch.value = '';
     searchResults.value = [];
-    selectedCombinedItems.value = [];
     finalCombinedItems.value = [];
-    selectedSeparateItem.value = null;
     searchError.value = null;
   }
 });
 
-watch(weighingType, () => {
-  planIdToSearch.value = '';
-  searchResults.value = [];
-  selectedSeparateItem.value = null;
-  selectedCombinedItems.value = [];
-  searchError.value = null;
-});
+
+// --- Functions for Item Management ---
 
 async function handleSearchPlan() {
   if (!planIdToSearch.value.trim()) return;
@@ -52,16 +56,20 @@ async function handleSearchPlan() {
   searchError.value = null;
   searchResults.value = [];
   const API_BASE_URL = 'http://localhost:8000';
+
   try {
     const response = await fetch(`${API_BASE_URL}/api/shipment-plans/${planIdToSearch.value.trim()}`);
     if (!response.ok) throw new Error('ไม่พบข้อมูลแผนการจัดส่ง');
+    
     const data = await response.json();
     if (data.length === 0) {
       searchError.value = `ไม่พบข้อมูลสำหรับเลขที่เอกสาร: ${planIdToSearch.value}`;
     } else {
-      searchResults.value = data.map(item => ({
-        ...item,
-        editable_qty: item.LFIMG // <-- ใช้ LFIMG
+      // Correctly prepares data for v-model by adding 'selected' and 'editable_qty'
+      searchResults.value = data.map(item => ({ 
+        ...item, 
+        selected: false,
+        editable_qty: item.LFIMG
       }));
     }
   } catch (error) {
@@ -71,56 +79,97 @@ async function handleSearchPlan() {
   }
 }
 
-function addSelectedToFinalList() {
-  for (const item of selectedCombinedItems.value) {
-    if (!finalCombinedItems.value.some(finalItem => finalItem.VBELN === item.VBELN && finalItem.POSNR === item.POSNR)) {
-      // ตอนเพิ่มลงตะกร้า ให้เอา editable_qty ติดไปด้วย
-      finalCombinedItems.value.push(item); 
+// *** NEW *** Function for the "Select All" checkbox
+function toggleSelectAllResults(event) {
+  const isChecked = event.target.checked;
+  searchResults.value.forEach(item => item.selected = isChecked);
+}
+
+function addSelectedToCart() {
+  const selectedItems = searchResults.value.filter(item => item.selected);
+
+  for (const item of selectedItems) {
+    const isDuplicate = finalCombinedItems.value.some(
+      cartItem => cartItem.VBELN === item.VBELN && cartItem.POSNR === item.POSNR
+    );
+    if (!isDuplicate) {
+      finalCombinedItems.value.push(item);
     }
   }
-  searchResults.value = [];
-  selectedCombinedItems.value = [];
-  planIdToSearch.value = '';
+
+  // --- จุดแก้ไข ---
+  // แทนที่จะล้างทั้งหมด เราจะกรองรายการที่ถูกเลือกแล้วออกไป
+  searchResults.value = searchResults.value.filter(item => !item.selected);
+
+  // ถ้าไม่มีรายการเหลือในผลการค้นหาแล้ว ก็ให้ล้าง planIdToSearch ไปเลย
+  if (searchResults.value.length === 0) {
+      planIdToSearch.value = '';
+  }
 }
 
-function removeFromFinalList(itemToRemove) {
-  finalCombinedItems.value = finalCombinedItems.value.filter(item =>
-    !(item.VBELN === itemToRemove.VBELN && item.POSNR === itemToRemove.POSNR)
-  );
+// *** NEW *** Function to remove an item from the cart by its index
+function removeFromCart(index) {
+  finalCombinedItems.value.splice(index, 1);
 }
 
+
+// --- Main Save Function ---
 function handleSave() {
   if (!selectedQueueObject.value) {
-    alert('กรุณาเลือกคิวรถ');
+    alert('กรุณาเลือกคิวรถก่อนทำการบันทึก');
     return;
   }
-  
-  let dataToSave = {
+
+  // 1. เตรียมข้อมูลหลัก (เหมือนเดิม)
+  let mainDataPayload = {
     WE_LICENSE: selectedQueueObject.value.CARLICENSE,
     WE_VENDOR: selectedQueueObject.value.AR_NAME,
     WE_VENDOR_CD: selectedQueueObject.value.KUNNR,
     WE_WEIGHTIN: props.initialWeightIn,
   };
 
-  if (weighingType.value === 'separate' && selectedSeparateItem.value) {
-    dataToSave.WE_DIREF = selectedSeparateItem.value.VBELN;
-    dataToSave.WE_MAT_CD = selectedSeparateItem.value.MATNR;
-    dataToSave.WE_MAT = selectedSeparateItem.value.ARKTX;
-  } else if (weighingType.value === 'combined' && finalCombinedItems.value.length > 0) {
-    dataToSave.items = finalCombinedItems.value.map(item => ({
-      VBELN: item.VBELN,
-      POSNR: item.POSNR,
-      WE_MAT_CD: item.MATNR,
-      WE_MAT: item.ARKTX,
-      WE_QTY: item.editable_qty, // <-- ใช้จำนวนที่แก้ไขได้
-      WE_UOM: item.VRKME
-    }));
-  }
-  
-  emit('save', dataToSave);
-}
-</script>
+  // 2. เตรียมข้อมูลรายการ (เหมือนเดิม)
+  const itemsPayload = finalCombinedItems.value.map(item => ({
+    VBELN: item.VBELN,
+    POSNR: item.POSNR,
+    WE_MAT_CD: item.MATNR,
+    WE_MAT: item.ARKTX,
+    WE_QTY: parseInt(item.editable_qty) || 0,
+    WE_UOM: item.VRKME
+  }));
 
+  // 3. Logic การตัดสินใจ (เหมือนเดิม)
+  if (finalCombinedItems.value.length === 0) {
+    Object.assign(mainDataPayload, {
+      WE_DIREF: 'รอลงรายการ', WE_MAT_CD: null, WE_MAT: null, WE_QTY: null, WE_UOM: null,
+    });
+  } else if (finalCombinedItems.value.length === 1) {
+    const singleItem = finalCombinedItems.value[0];
+    Object.assign(mainDataPayload, {
+      WE_DIREF: singleItem.VBELN, WE_MAT_CD: singleItem.MATNR, WE_MAT: singleItem.ARKTX, WE_QTY: parseInt(singleItem.editable_qty) || 0, WE_UOM: singleItem.VRKME,
+    });
+  } else {
+    Object.assign(mainDataPayload, {
+      WE_DIREF: 'ชั่งรวม', WE_MAT_CD: 'ชั่งรวม', WE_MAT: 'สินค้าชั่งรวม', WE_QTY: null, WE_UOM: null,
+    });
+  }
+
+  // V V V V V V V V V V V V V V V V V V V V
+  // --- จุดแก้ไขที่สำคัญที่สุด ---
+  // 4. รวบรวมข้อมูลทั้งหมดเป็น Flat Object ตามที่ Backend ต้องการ
+  const finalPayload = {
+    ...mainDataPayload, // ใช้ Spread Operator (...) เพื่อนำ key-value ทั้งหมดใน mainDataPayload ออกมาวางในระดับบนสุด
+    items: itemsPayload,
+  };
+  // ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^
+
+  console.log("Emitting save event with FLAT payload structure:", finalPayload);
+  
+  // 5. ส่งข้อมูลกลับไปให้ App.vue
+  emit('save', finalPayload);
+}
+
+</script>
 <template>
   <div v-if="visible" class="modal-overlay" @click.self="emit('close')">
     <div class="modal-content">
@@ -130,7 +179,7 @@ function handleSave() {
       </div>
 
       <form @submit.prevent="handleSave" class="modal-body">
-        <!-- Part 1: Car Queue Selection -->
+        <!-- Part 1: Car Queue (คงเดิม) -->
         <div class="form-group">
           <label for="car-queue-select">เลือกเลขที่คิว</label>
           <select id="car-queue-select" v-model="selectedQueueSeq" required>
@@ -147,88 +196,90 @@ function handleSave() {
         
         <hr class="divider">
 
-        <!-- Part 2: Weighing Type Selection -->
-        <div class="form-group weighing-type-selector">
-          <label>ประเภทการชั่ง</label>
-          <div>
-            <label><input type="radio" value="combined" v-model="weighingType"> ชั่งรวม</label>
-            <label><input type="radio" value="separate" v-model="weighingType"> ชั่งแยก</label>
-          </div>
-        </div>
+        <!-- ==================================================================== -->
+        <!-- Part 2: UI สำหรับค้นหาและจัดการรายการสินค้า (ชุดใหม่ทั้งหมด) -->
+        <!-- ==================================================================== -->
+        <div class="shipment-plan-section">
 
-        <!-- Part 3: Dynamic Forms -->
-        <!-- Form for SEPARATE weighing -->
-        <div v-if="weighingType === 'separate'" class="shipment-plan-section">
+          <!-- ส่วนควบคุมการค้นหา -->
           <div class="form-group">
-            <label>กรณีชั่งแยก (ค้นหาเลขที่เอกสาร)</label>
+            <label>ค้นหาและเพิ่มรายการจากเอกสาร (ไม่บังคับ)</label>
             <div class="search-form-inline">
               <input type="text" v-model="planIdToSearch" placeholder="กรอกเลขที่เอกสาร..." @keyup.enter="handleSearchPlan" maxlength="10">
               <button type="button" @click="handleSearchPlan" :disabled="searchLoading" class="search-button">{{ searchLoading ? '...' : 'ค้นหา' }}</button>
             </div>
           </div>
           <div v-if="searchError" class="search-error">{{ searchError }}</div>
-          <div v-if="searchResults.length > 0" class="form-group mt-1">
-            <label for="item-select">เลือกรายการสินค้า</label>
-            <select id="item-select" v-model="selectedSeparateItem">
-              <option :value="null" disabled>-- กรุณาเลือกรายการ --</option>
-              <option v-for="item in searchResults" :key="item.POSNR" :value="item">{{ item.POSNR }} - {{ item.ARKTX }}</option>
-            </select>
-          </div>
-        </div>
 
-        <!-- Form for COMBINED weighing -->
-        <div v-if="weighingType === 'combined'" class="shipment-plan-section">
-          <div class="form-group">
-            <label>กรณีชั่งรวม (ค้นหาและเพิ่มได้หลายเอกสาร)</label>
-            <div class="search-form-inline">
-              <input type="text" v-model="planIdToSearch" placeholder="กรอกเลขที่เอกสาร..." @keyup.enter="handleSearchPlan" maxlength="10">
-              <button type="button" @click="handleSearchPlan" :disabled="searchLoading" class="search-button">{{ searchLoading ? '...' : 'ค้นหา' }}</button>
-            </div>
-          </div>
-          <div v-if="searchError" class="search-error">{{ searchError }}</div>
-          
-          <div v-if="searchResults.length > 0">
+          <!-- ส่วนแสดงผลการค้นหา (ถ้ามี) -->
+          <div v-if="searchResults.length > 0" class="search-results-wrapper mt-2">
             <div class="search-results-container">
               <table>
                 <thead>
                   <tr>
-                    <th><input type="checkbox" disabled></th>
+                    <th><input type="checkbox" @change="toggleSelectAllResults($event)"></th>
                     <th>สินค้า</th>
-                    <th style="width: 100px;">จำนวน</th>
+                    <th>จำนวนตั้งต้น</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="item in searchResults" :key="item.POSNR">
-                    <td><input type="checkbox" :value="item" v-model="selectedCombinedItems"></td>
+                    <td><input type="checkbox" v-model="item.selected"></td>
                     <td>{{ item.POSNR }} - {{ item.ARKTX }}</td>
+                    <td>{{ item.LFIMG?.toLocaleString('en-US') }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <button type="button" @click="addSelectedToCart" :disabled="!hasSelectedSearchResults" class="add-to-list-button">
+              + เพิ่มรายการที่เลือกลงตะกร้า
+            </button>
+          </div>
+
+          <hr class="divider">
+
+          <!-- ส่วนตะกร้าสินค้า (Final List) -->
+          <div class="final-list-container">
+            <label>รายการสินค้าในบัตรชั่ง</label>
+            <div v-if="finalCombinedItems.length === 0" class="empty-list">
+              -- ยังไม่มีรายการ -- <br>
+              <small>(หากไม่เพิ่มรายการ จะเป็นการสร้างบัตรชั่งแบบ 'รอลงรายการ')</small>
+            </div>
+            <div v-else class="items-table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>สินค้า</th>
+                    <th style="width: 120px;">จำนวน</th>
+                    <th>หน่วย</th>
+                    <th style="width: 50px;"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(item, index) in finalCombinedItems" :key="`${item.VBELN}-${item.POSNR}`">
+                    <td>{{ item.ARKTX }}</td>
                     <td>
-                      <input type="number" v-model="item.editable_qty" class="qty-input">
+                      <input 
+                        type="number" 
+                        v-model.number="item.editable_qty"
+                        class="qty-input"
+                        min="0"
+                      >
+                    </td>
+                    <td>{{ item.VRKME }}</td>
+                    <td class="action-cell">
+                      <button type="button" @click="removeFromCart(index)" class="remove-btn">&times;</button>
                     </td>
                   </tr>
                 </tbody>
               </table>
             </div>
-            <button type="button" @click="addSelectedToFinalList" :disabled="selectedCombinedItems.length === 0" class="add-to-list-button">
-              + เพิ่มรายการที่เลือกลงตะกร้า
-            </button>
-          </div>
-
-          <div class="final-list-container">
-            <label>รายการทั้งหมดที่จะบันทึก ({{ finalCombinedItems.length }} รายการ)</label>
-            <div v-if="finalCombinedItems.length === 0" class="empty-list">-- ยังไม่มีรายการ --</div>
-            <ul v-else>
-              <li v-for="item in finalCombinedItems" :key="`${item.VBELN}-${item.POSNR}`">
-                <span>{{ item.VBELN }}/{{ item.POSNR }} - {{ item.ARKTX }}</span>
-                <strong class="item-qty">{{ item.editable_qty?.toLocaleString('en-US') }} {{ item.VRKME }}</strong>
-                <button type="button" @click="removeFromFinalList(item)" class="remove-btn">&times;</button>
-              </li>
-            </ul>
           </div>
         </div>
 
         <hr class="divider">
 
-        <!-- Part 4: Weight and Actions -->
+        <!-- Part 3: Weight and Actions (คงเดิม) -->
         <div class="form-group">
           <label>น้ำหนักชั่งเข้า</label>
           <div class="weight-preview">{{ initialWeightIn.toLocaleString('en-US') }} กก.</div>
@@ -241,7 +292,6 @@ function handleSave() {
     </div>
   </div>
 </template>
-
 <style scoped>
 /* Base Modal Styles */
 .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.6); display: flex; justify-content: center; align-items: center; z-index: 1000; }

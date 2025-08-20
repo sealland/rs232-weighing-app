@@ -23,7 +23,7 @@ app.add_middleware(
     allow_origins=origins,
     allow_credentials=True,
     # ระบุ Methods ทั้งหมดที่เราใช้ลงไปตรงๆ
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -142,6 +142,22 @@ def read_car_queue(db: Session = Depends(get_db_pp)):
     car_queue = crud.get_available_car_queue(db)
     return car_queue
 # ---------------------------------------
+# --- เพิ่ม Endpoint ใหม่สำหรับ "แทนที่" รายการสินค้า ---
+@app.put("/api/tickets/{ticket_id}/items", response_model=schemas.WeightTicketDetails)
+def replace_items_in_a_ticket(
+    ticket_id: str,
+    items: List[schemas.WeightTicketItemCreate], # <-- รับ List ของ Items ใหม่จาก Body
+    db: Session = Depends(get_db_scale)
+):
+    """
+    API Endpoint สำหรับแทนที่รายการสินค้าทั้งหมดในบัตรชั่ง
+    (ใช้สำหรับโหมดแก้ไขชั่งรวม)
+    """
+    updated_ticket = crud.replace_ticket_items(db, ticket_id=ticket_id, items=items)
+    if updated_ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return updated_ticket
+# ------------------------------------------------
 
 # --- เพิ่ม Endpoint ใหม่สำหรับเพิ่มรายการสินค้า ---
 @app.post("/api/tickets/{ticket_id}/items", response_model=schemas.WeightTicketDetails)
