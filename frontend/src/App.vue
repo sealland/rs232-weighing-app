@@ -29,6 +29,9 @@ const isModalVisible = ref(false)
 const isCreateModalVisible = ref(false);
 const initialWeightForNewTicket = ref(0);
 
+// State for Report Type
+const selectedTicketDetail = ref(null)
+
 const continuousWeighingData = ref(null);
 
 // State for Loading Actions
@@ -52,6 +55,16 @@ const selectedTicketObject = computed(() => {
   // ถ้าไม่เจอ ให้ไปค้นหาในตาราง 'เสร็จสิ้นแล้ว'
   return completedTickets.value.find(t => t.WE_ID === selectedTicketId.value);
 });
+
+// --- ฟังก์ชันสำหรับแสดงประเภทรายงาน ---
+function getReportTypeText(ticket) {
+  // ตรวจสอบว่ามีรายการสินค้าหรือไม่
+  if (ticket && ticket.items && ticket.items.length > 0) {
+    return 'ชั่งรวม';
+  } else {
+    return 'ชั่งแยก';
+  }
+}
 
 // --- API & WebSocket Config ---
 // const API_BASE_URL = 'http://192.168.132.7:8000';
@@ -176,11 +189,23 @@ function closeModal() {
   isModalVisible.value = false
   detailTicket.value = null
 }
-function selectTicket(ticketId) {
+async function selectTicket(ticketId) {
   if (selectedTicketId.value === ticketId) {
     selectedTicketId.value = null;
+    selectedTicketDetail.value = null;
   } else {
     selectedTicketId.value = ticketId;
+    // ดึงข้อมูลรายละเอียดของบัตรชั่งที่เลือก
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}`);
+      if (response.ok) {
+        selectedTicketDetail.value = await response.json();
+        console.log('Selected ticket detail:', selectedTicketDetail.value);
+      }
+    } catch (error) {
+      console.error('Failed to fetch ticket detail:', error);
+      selectedTicketDetail.value = null;
+    }
   }
 }
 async function handleViewTicket(ticketId) {
@@ -385,20 +410,42 @@ async function handlePrintReport() {
 
   isPrintingReport.value = true;
   try {
-    // ดึง URL ของรายงาน
-    const response = await fetch(`${API_BASE_URL}/api/reports/${selectedTicketId.value}/urls`);
+    // ใช้ข้อมูลรายละเอียดที่ดึงไว้แล้ว หรือดึงใหม่ถ้าไม่มี
+    let ticketDetail = selectedTicketDetail.value;
     
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+    if (!ticketDetail) {
+      // ดึงข้อมูลรายละเอียดของบัตรชั่งเพื่อตรวจสอบรายการสินค้า
+      const response = await fetch(`${API_BASE_URL}/api/tickets/${selectedTicketId.value}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      ticketDetail = await response.json();
+    }
+    
+    console.log('Ticket detail for report:', ticketDetail);
+    
+    // ตรวจสอบประเภทการชั่งจากรายการสินค้า
+    const hasItems = ticketDetail.items && ticketDetail.items.length > 0;
+    const reportType = hasItems ? 'combined' : 'separate';
+    
+    console.log(`Items found: ${hasItems ? 'Yes' : 'No'}, Items count: ${ticketDetail.items ? ticketDetail.items.length : 0}`);
+    
+    // สร้าง URL ตามประเภทการชั่ง
+    let reportUrl;
+    if (reportType === 'combined') {
+      // ชั่งรวม - ใช้ A4
+      reportUrl = `https://reports.zubbsteel.com/zticket_a4.php?id=${selectedTicketId.value}`;
+    } else {
+      // ชั่งแยก - ใช้ A5
+      reportUrl = `https://reports.zubbsteel.com/zticket_a5.php?id=${selectedTicketId.value}`;
     }
 
-    const reportData = await response.json();
-    const reportUrl = reportData.recommended_url;
+    console.log(`Opening report: ${reportType} (${hasItems ? 'ชั่งรวม' : 'ชั่งแยก'}) - ${reportUrl}`);
 
     if (printAction.value === 'preview') {
       // Preview - เปิดในแท็บใหม่
       window.open(reportUrl, '_blank');
-      alert('เปิดรายงานในแท็บใหม่แล้ว!');
+      // ปิดการแสดงแจ้งเตือน
     } else {
       // สั่งพิมพ์ - ใช้ iframe เพื่อสั่งพิมพ์
       const printFrame = document.createElement('iframe');
@@ -418,7 +465,7 @@ async function handlePrintReport() {
       };
       
       document.body.appendChild(printFrame);
-      alert('กำลังสั่งพิมพ์...');
+      alert(`กำลังสั่งพิมพ์รายงาน${reportType === 'combined' ? 'ชั่งรวม' : 'ชั่งแยก'}...`);
     }
     
   } catch (error) {
@@ -496,6 +543,19 @@ async function refreshTicketData(ticketId) {
       fetchOpenTickets(selectedDate.value),
       fetchCompletedTickets(selectedDate.value)
   ]);
+  
+  // อัปเดตข้อมูลรายละเอียดของบัตรชั่งที่เลือก
+  if (selectedTicketId.value === ticketId) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}`);
+      if (response.ok) {
+        selectedTicketDetail.value = await response.json();
+      }
+    } catch (error) {
+      console.error('Failed to refresh ticket detail:', error);
+    }
+  }
+  
   await showTicketDetails(ticketId);
 }
 
@@ -604,7 +664,9 @@ onMounted(async () => {
               <!-- หัวข้อส่วนพิมพ์รายงาน -->
               <div class="print-section-header">
                 <span class="print-icon">📄</span>
-                <span class="print-title">พิมพ์รายงาน</span>
+                <span class="report-type-indicator" v-if="selectedTicketDetail">
+                  ({{ getReportTypeText(selectedTicketDetail) }})
+                </span>
               </div>
               
               <!-- ตัวเลือกการดำเนินการ -->
@@ -643,9 +705,9 @@ onMounted(async () => {
                 :disabled="isPrintingReport || !printAction"
               >
                 <span class="button-icon">
-                  {{ isPrintingReport ? '⏳' : '🚀' }}
+                  {{ isPrintingReport ? '⏳' : (printAction === 'preview' ? '👁️' : '🖨️') }}
                 </span>
-                {{ isPrintingReport ? 'กำลังดำเนินการ...' : 'ดำเนินการ' }}
+                {{ isPrintingReport ? 'กำลังดำเนินการ...' : (printAction === 'preview' ? 'ดูตัวอย่าง' : 'สั่งพิมพ์') }}
               </button>
             </div>
 
@@ -1363,10 +1425,10 @@ th {
 .print-report-section {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 1rem;
+  gap: 0.6rem;
+  padding: 0.8rem;
   background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-  border-radius: 12px;
+  border-radius: 10px;
   border: 1px solid var(--border-color);
   margin-top: 0.5rem;
 }
@@ -1374,24 +1436,31 @@ th {
 .print-section-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 2px solid var(--border-color);
+  gap: 0.4rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .print-icon {
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .print-title {
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 600;
   color: var(--text-color);
 }
 
+.report-type-indicator {
+  font-size: 0.75rem;
+  color: var(--primary-color);
+  font-weight: 500;
+  margin-left: 0.3rem;
+}
+
 .print-options {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.4rem;
   width: 100%;
 }
 
@@ -1400,10 +1469,10 @@ th {
   display: flex;
   align-items: center;
   cursor: pointer;
-  padding: 0.6rem;
-  border-radius: 8px;
+  padding: 0.5rem;
+  border-radius: 6px;
   background: white;
-  border: 2px solid var(--border-color);
+  border: 1px solid var(--border-color);
   transition: all 0.2s ease-in-out;
   position: relative;
   overflow: hidden;
@@ -1431,18 +1500,18 @@ th {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.2rem;
+  gap: 0.15rem;
   width: 100%;
   text-align: center;
 }
 
 .option-icon {
-  font-size: 1.2rem;
-  margin-bottom: 0.2rem;
+  font-size: 1rem;
+  margin-bottom: 0.15rem;
 }
 
 .option-text {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-color);
 }
@@ -1455,9 +1524,9 @@ th {
 .print-btn {
   background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
   border: none;
-  padding: 0.75rem 1rem;
-  border-radius: 8px;
-  font-size: 0.9rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
   font-weight: 600;
   color: white;
   cursor: pointer;
@@ -1467,7 +1536,7 @@ th {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
 }
 
 .print-btn:hover:not(:disabled) {
@@ -1487,18 +1556,18 @@ th {
 @media (max-width: 768px) {
   .print-options {
     flex-direction: column;
-    gap: 0.4rem;
+    gap: 0.3rem;
   }
   
   .print-option {
-    padding: 0.8rem;
+    padding: 0.6rem;
   }
   
   .option-content {
     flex-direction: row;
     justify-content: flex-start;
     text-align: left;
-    gap: 0.6rem;
+    gap: 0.5rem;
   }
   
   .option-icon {
