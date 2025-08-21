@@ -26,6 +26,8 @@ const isModalVisible = ref(false)
 const isCreateModalVisible = ref(false);
 const initialWeightForNewTicket = ref(0);
 
+const continuousWeighingData = ref(null);
+
 // State for Loading Actions
 const isCreatingTicket = ref(false)
 const isUpdatingTicket = ref(false)
@@ -34,20 +36,14 @@ const isCancellingTicket = ref(false)
 
 // --- Computed Property ---
 const selectedTicketObject = computed(() => {
-  // 1. ถ้าไม่มีการเลือก ก็ไม่ต้องทำอะไร
   if (!selectedTicketId.value) return null;
 
-  // 2. ค้นหาในตาราง 'กำลังดำเนินการ' ก่อน
+  // ค้นหาในตาราง 'กำลังดำเนินการ' ก่อน
   let ticket = openTickets.value.find(t => t.WE_ID === selectedTicketId.value);
-  if (ticket) {
-    return ticket; // ถ้าเจอ ให้ส่งค่ากลับทันที
-  }
+  if (ticket) return ticket;
 
-  // 3. ถ้าไม่เจอในตารางแรก ให้ไปค้นหาในตาราง 'เสร็จสิ้นแล้ว'
-  ticket = completedTickets.value.find(t => t.WE_ID === selectedTicketId.value);
-  
-  // 4. ส่งค่าที่เจอ (หรือ null ถ้าไม่เจอเลย) กลับไป
-  return ticket; 
+  // ถ้าไม่เจอ ให้ไปค้นหาในตาราง 'เสร็จสิ้นแล้ว'
+  return completedTickets.value.find(t => t.WE_ID === selectedTicketId.value);
 });
 
 // --- API & WebSocket Config ---
@@ -139,6 +135,70 @@ function selectTicket(ticketId) {
   } else {
     selectedTicketId.value = ticketId;
   }
+}
+async function handleViewTicket(ticketId) {
+  console.log(`กำลังจะเปลี่ยนไปดูบัตร: ${ticketId}`);
+  // 1. ปิด Modal ปัจจุบัน
+  closeModal();
+  // 2. รอสักครู่เพื่อให้ UI หายไปก่อน
+  await new Promise(resolve => setTimeout(resolve, 150)); 
+  // 3. เปิดรายละเอียดของบัตรใบใหม่
+  await showTicketDetails(ticketId);
+}
+
+function handleStartContinuousWeighing() {
+  // Log ที่ 1: ตรวจสอบว่าฟังก์ชันถูกเรียกหรือไม่
+  console.log("1. ฟังก์ชัน 'handleStartContinuousWeighing' เริ่มทำงาน");
+
+  // ตรวจสอบ Guard Clause
+  if (!selectedTicketObject.value) {
+    console.error("2. [ERROR] ออกจากฟังก์ชันเพราะ 'selectedTicketObject' ไม่มีค่า (เป็น null)");
+    return;
+  }
+
+  // Log ที่ 2: ดูข้อมูลของบัตรที่เลือก
+  console.log("2. ข้อมูลของบัตรที่เลือก (selectedTicketObject):", JSON.parse(JSON.stringify(selectedTicketObject.value)));
+
+  const previousTicket = selectedTicketObject.value;
+
+  // Log ที่ 3: ตรวจสอบค่าที่จำเป็นก่อนนำไปใช้
+  console.log("3. กำลังตรวจสอบ Property ที่จำเป็น:");
+  console.log("   - WE_LICENSE:", previousTicket.WE_LICENSE);
+  console.log("   - WE_VENDOR:", previousTicket.WE_VENDOR);
+  console.log("   - WE_VENDOR_CD:", previousTicket.WE_VENDOR_CD);
+  console.log("   - WE_WEIGHTOUT:", previousTicket.WE_WEIGHTOUT);
+  console.log("   - WE_SEQ:", previousTicket.WE_SEQ); // เพิ่มการ log WE_SEQ
+
+  // ตรวจสอบว่ามีค่าที่จำเป็นครบหรือไม่
+  if (!previousTicket.WE_LICENSE || !previousTicket.WE_WEIGHTOUT) {
+      console.error("4. [ERROR] ออกจากฟังก์ชันเพราะไม่มีข้อมูล 'ทะเบียนรถ' หรือ 'น้ำหนักชั่งออก'");
+      alert("ไม่สามารถชั่งต่อเนื่องได้: ข้อมูลบัตรชั่งไม่สมบูรณ์");
+      return;
+  }
+
+  // 1. เตรียมข้อมูลที่จะส่งต่อ
+  const dataToPass = {
+    CARLICENSE: previousTicket.WE_LICENSE,
+    AR_NAME: previousTicket.WE_VENDOR,
+    KUNNR: previousTicket.WE_VENDOR_CD,
+    INITIAL_WEIGHT_IN: previousTicket.WE_WEIGHTOUT 
+  };
+  
+  // Log ที่ 4: ดูข้อมูลที่จะส่งต่อไปให้ Modal
+  console.log("4. ข้อมูลที่จะถูกส่งต่อไปให้ Modal (continuousWeighingData):", dataToPass);
+  continuousWeighingData.value = {
+    CARLICENSE: previousTicket.WE_LICENSE,
+    AR_NAME: previousTicket.WE_VENDOR,
+    KUNNR: previousTicket.WE_VENDOR_CD,
+    INITIAL_WEIGHT_IN: previousTicket.WE_WEIGHTOUT,
+    PARENT_ID: previousTicket.WE_ID,
+    WE_SEQ: previousTicket.WE_SEQ
+  };
+    
+  // 2. เปิด CreateTicketModal
+  // Log ที่ 5: ยืนยันว่ากำลังจะเปิด Modal
+  console.log("5. กำลังจะตั้งค่า isCreateModalVisible เป็น true...");
+  isCreateModalVisible.value = true;
 }
 async function handleCreateTicket(ticketData) {
   isCreatingTicket.value = true;
@@ -504,13 +564,14 @@ onMounted(async () => {
       @close="closeModal"
       @weigh-out="handleWeighOut"
       @ticket-updated="handleTicketUpdate"
+      @view-ticket="handleViewTicket"
     />
     <!-- *** เพิ่ม Prop ใหม่ 'continuousData' เข้าไป *** -->
     <CreateTicketModal
       :visible="isCreateModalVisible"
       :initial-weight-in="initialWeightForNewTicket"
       :car-queue="carQueue"
-      :continuous-data="continuousWeighingData" 
+      :continuous-data-from-prev-ticket="continuousWeighingData"
       @close="isCreateModalVisible = false"
       @save="handleCreateTicket"
     />

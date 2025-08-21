@@ -6,12 +6,15 @@ import { ref, watch, computed } from 'vue';
 const props = defineProps({
   visible: { type: Boolean, default: false },
   initialWeightIn: { type: Number, default: 0 },
-  carQueue: { type: Array, default: () => [] }
+  carQueue: { type: Array, default: () => [] },
+  continuousDataFromPrevTicket: { type: Object, default: null } 
 });
 const emit = defineEmits(['close', 'save']);
 
 // --- State Management (Refactored for Simplicity) ---
 const selectedQueueSeq = ref('');
+const autoFilledData = ref(null);
+const finalWeightIn = ref(0);
 
 // State for Searching
 const planIdToSearch = ref('');
@@ -38,12 +41,42 @@ const hasSelectedSearchResults = computed(() => {
 // --- Watchers ---
 // Watcher to reset the modal state when it becomes visible
 watch(() => props.visible, (isVisible) => {
-  if (isVisible) {
-    selectedQueueSeq.value = '';
-    planIdToSearch.value = '';
-    searchResults.value = [];
-    finalCombinedItems.value = [];
-    searchError.value = null;
+  if (!isVisible) return;
+
+  // --- รีเซ็ตค่า ---
+  finalCombinedItems.value = [];
+  planIdToSearch.value = '';
+  searchResults.value = [];
+  searchError.value = null;
+  selectedQueueSeq.value = ''; // รีเซ็ต dropdown
+  autoFilledData.value = null; // รีเซ็ตข้อมูลที่ส่งต่อมา
+
+  // --- Logic กำหนดค่าเริ่มต้น ---
+  if (props.continuousDataFromPrevTicket) {
+    // === กรณีชั่งต่อเนื่อง ===
+    console.log("=== DEBUG: Continuous Data ===");
+    console.log("props.continuousDataFromPrevTicket:", props.continuousDataFromPrevTicket);
+    console.log("WE_LICENSE:", props.continuousDataFromPrevTicket.WE_LICENSE);
+    console.log("WE_VENDOR:", props.continuousDataFromPrevTicket.WE_VENDOR);
+    console.log("WE_VENDOR_CD:", props.continuousDataFromPrevTicket.WE_VENDOR_CD);
+    console.log("WE_SEQ:", props.continuousDataFromPrevTicket.WE_SEQ);
+    
+    autoFilledData.value = {
+      ...props.continuousDataFromPrevTicket,
+      // ใช้ข้อมูลที่มีอยู่แล้วใน props โดยตรง
+      CARLICENSE: props.continuousDataFromPrevTicket.CARLICENSE || '(ไม่ระบุ)',
+      AR_NAME: props.continuousDataFromPrevTicket.AR_NAME || '(ไม่ระบุ)',
+      KUNNR: props.continuousDataFromPrevTicket.KUNNR || '(ไม่ระบุ)',
+      SEQ: props.continuousDataFromPrevTicket.WE_SEQ
+    };
+    
+    console.log("autoFilledData.value after assignment:", autoFilledData.value);
+    console.log("=== END DEBUG ===");
+    
+    finalWeightIn.value = props.continuousDataFromPrevTicket.INITIAL_WEIGHT_IN;
+  } else {
+    // === กรณีสร้างบัตรใหม่ปกติ ===
+    finalWeightIn.value = props.initialWeightIn;
   }
 });
 
@@ -115,27 +148,46 @@ function removeFromCart(index) {
 
 // --- Main Save Function ---
 function handleSave() {
-  if (!selectedQueueObject.value) {
-    alert('กรุณาเลือกคิวรถก่อนทำการบันทึก');
+  const sourceData = autoFilledData.value || selectedQueueObject.value;
+
+  if (!sourceData) {
+    alert('กรุณาเลือกคิวรถ หรือข้อมูลรถไม่ถูกต้อง');
     return;
   }
 
-  // 1. เตรียมข้อมูลหลัก (เหมือนเดิม)
+  // ตรวจสอบข้อมูลที่จำเป็น
+  if (!sourceData.CARLICENSE) {
+    alert('ข้อมูลทะเบียนรถไม่ถูกต้อง');
+    return;
+  }
+
+  if (!sourceData.AR_NAME) {
+    alert('ข้อมูลชื่อลูกค้าไม่ถูกต้อง');
+    return;
+  }
+
+  if (!finalWeightIn.value || finalWeightIn.value <= 0) {
+    alert('กรุณากรอกน้ำหนักชั่งเข้าให้ถูกต้อง');
+    return;
+  }
+  
   let mainDataPayload = {
-    WE_LICENSE: selectedQueueObject.value.CARLICENSE,
-    WE_VENDOR: selectedQueueObject.value.AR_NAME,
-    WE_VENDOR_CD: selectedQueueObject.value.KUNNR,
-    WE_WEIGHTIN: props.initialWeightIn,
+    WE_LICENSE: sourceData.CARLICENSE,
+    WE_VENDOR: sourceData.AR_NAME,
+    WE_VENDOR_CD: sourceData.KUNNR,
+    WE_WEIGHTIN: finalWeightIn.value,
+    // --- เพิ่มการส่งเลขคิว ---
+    WE_SEQ: props.continuousDataFromPrevTicket ? props.continuousDataFromPrevTicket.WE_SEQ : selectedQueueObject.value?.SEQ
   };
 
   // 2. เตรียมข้อมูลรายการ (เหมือนเดิม)
   const itemsPayload = finalCombinedItems.value.map(item => ({
     VBELN: item.VBELN,
     POSNR: item.POSNR,
-    WE_MAT_CD: item.MATNR,
-    WE_MAT: item.ARKTX,
-    WE_QTY: parseInt(item.editable_qty) || 0,
-    WE_UOM: item.VRKME
+    WE_MAT_CD: item.MATNR || null,
+    WE_MAT: item.ARKTX || null,
+    WE_QTY: parseFloat(item.editable_qty) || 0,  // เปลี่ยนจาก parseInt เป็น parseFloat
+    WE_UOM: item.VRKME || null
   }));
 
   // 3. Logic การตัดสินใจ (เหมือนเดิม)
@@ -146,7 +198,11 @@ function handleSave() {
   } else if (finalCombinedItems.value.length === 1) {
     const singleItem = finalCombinedItems.value[0];
     Object.assign(mainDataPayload, {
-      WE_DIREF: singleItem.VBELN, WE_MAT_CD: singleItem.MATNR, WE_MAT: singleItem.ARKTX, WE_QTY: parseInt(singleItem.editable_qty) || 0, WE_UOM: singleItem.VRKME,
+      WE_DIREF: singleItem.VBELN, 
+      WE_MAT_CD: singleItem.MATNR || null, 
+      WE_MAT: singleItem.ARKTX || null, 
+      WE_QTY: parseFloat(singleItem.editable_qty) || 0, 
+      WE_UOM: singleItem.VRKME || null,
     });
   } else {
     Object.assign(mainDataPayload, {
@@ -158,12 +214,24 @@ function handleSave() {
   // --- จุดแก้ไขที่สำคัญที่สุด ---
   // 4. รวบรวมข้อมูลทั้งหมดเป็น Flat Object ตามที่ Backend ต้องการ
   const finalPayload = {
-    ...mainDataPayload, // ใช้ Spread Operator (...) เพื่อนำ key-value ทั้งหมดใน mainDataPayload ออกมาวางในระดับบนสุด
-    items: itemsPayload,
+    ...mainDataPayload,
+    // ส่ง items เฉพาะเมื่อมีรายการสินค้า
+    ...(finalCombinedItems.value.length > 0 && { items: itemsPayload }),
+    // ส่ง ID ของบัตรแม่ไปใน field ที่ชื่อ 'parent_id' ให้ตรงกับ Pydantic
+    parent_id: props.continuousDataFromPrevTicket ? props.continuousDataFromPrevTicket.PARENT_ID : null
   };
   // ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^
 
-  console.log("Emitting save event with FLAT payload structure:", finalPayload);
+  console.log("=== DEBUG: Data being sent to API ===");
+  console.log("sourceData:", sourceData);
+  console.log("autoFilledData.value:", autoFilledData.value);
+  console.log("selectedQueueObject.value:", selectedQueueObject.value);
+  console.log("mainDataPayload:", mainDataPayload);
+  console.log("itemsPayload:", itemsPayload);
+  console.log("finalCombinedItems.value:", finalCombinedItems.value);
+  console.log("finalPayload:", finalPayload);
+  console.log("finalPayload JSON:", JSON.stringify(finalPayload, null, 2));
+  console.log("=== END DEBUG ===");
   
   // 5. ส่งข้อมูลกลับไปให้ App.vue
   emit('save', finalPayload);
@@ -179,21 +247,29 @@ function handleSave() {
       </div>
 
       <form @submit.prevent="handleSave" class="modal-body">
-        <!-- Part 1: Car Queue (คงเดิม) -->
+        <!-- Part 1: Car Queue (ปรับปรุงสำหรับการชั่งต่อเนื่อง) -->
         <div class="form-group">
           <label for="car-queue-select">เลือกเลขที่คิว</label>
-          <select id="car-queue-select" v-model="selectedQueueSeq" required>
+          <!-- แสดง dropdown สำหรับเลือกคิวรถ (เฉพาะกรณีสร้างบัตรใหม่ปกติ) -->
+          <select id="car-queue-select" v-model="selectedQueueSeq" :disabled="continuousDataFromPrevTicket" required v-if="!continuousDataFromPrevTicket">
             <option disabled value="">-- กรุณาเลือกคิวรถ --</option>
             <option v-for="queue in carQueue" :key="queue.SEQ" :value="queue.SEQ">
               คิว {{ queue.SEQ }} - {{ queue.CARLICENSE }} ({{ queue.AR_NAME }})
             </option>
           </select>
+          <!-- แสดงเลขคิวที่คัดลอกมา (กรณีชั่งต่อเนื่อง) -->
+          <div v-if="continuousDataFromPrevTicket" class="copied-queue-display">
+            <div class="copied-queue-info">
+              <strong>เลขคิวที่คัดลอก:</strong> {{ autoFilledData?.WE_SEQ }}
+              <small>(คัดลอกจากบัตรชั่งหลัก)</small>
+            </div>
+          </div>
         </div>
-        <div v-if="selectedQueueObject" class="auto-filled-data">
-          <div class="data-display"><strong>ทะเบียน:</strong> {{ selectedQueueObject.CARLICENSE }}</div>
-          <div class="data-display"><strong>ลูกค้า:</strong> {{ selectedQueueObject.AR_NAME }}</div>
+        <div v-if="selectedQueueObject || autoFilledData" class="auto-filled-data">
+          <div class="data-display"><strong>ทะเบียน:</strong> {{ (selectedQueueObject || autoFilledData)?.CARLICENSE }}</div>
+          <div class="data-display"><strong>ลูกค้า:</strong> {{ (selectedQueueObject || autoFilledData)?.AR_NAME }}</div>
         </div>
-        
+
         <hr class="divider">
 
         <!-- ==================================================================== -->
@@ -282,7 +358,7 @@ function handleSave() {
         <!-- Part 3: Weight and Actions (คงเดิม) -->
         <div class="form-group">
           <label>น้ำหนักชั่งเข้า</label>
-          <div class="weight-preview">{{ initialWeightIn.toLocaleString('en-US') }} กก.</div>
+          <div class="weight-preview">{{ (finalWeightIn || 0).toLocaleString('en-US') }} กก.</div>
         </div>
         <div class="modal-footer">
           <button type="button" @click="emit('close')" class="cancel-button">ยกเลิก</button>
@@ -344,5 +420,26 @@ function handleSave() {
 .item-qty {
   flex-shrink: 0; /* ไม่ให้จำนวนหด */
   margin-left: auto; /* ดันไปทางขวา */
+}
+
+/* --- เพิ่ม CSS สำหรับการแสดงเลขคิวที่คัดลอก --- */
+.copied-queue-display {
+  margin-top: 0.5rem;
+}
+
+.copied-queue-info {
+  padding: 0.8rem;
+  background-color: #e3f2fd;
+  border: 1px solid #2196f3;
+  border-radius: 4px;
+  color: #1976d2;
+  font-weight: bold;
+}
+
+.copied-queue-info small {
+  display: block;
+  margin-top: 0.2rem;
+  font-weight: normal;
+  color: #666;
 }
 </style>

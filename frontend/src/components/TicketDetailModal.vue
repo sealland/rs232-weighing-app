@@ -5,7 +5,7 @@ const props = defineProps({
   ticket: { type: Object, default: null },
   visible: { type: Boolean, default: false }
 });
-const emit = defineEmits(['close', 'weigh-out', 'ticket-updated']);
+const emit = defineEmits(['close', 'weigh-out', 'ticket-updated', 'view-ticket']);
 
 // --- State Management for Edit Mode ---
 const isEditing = ref(false);
@@ -264,6 +264,19 @@ async function handleSearchPlan() {
           <div><strong>เวลาชั่งออก:</strong> {{ ticket.WE_TIMEOUT ? new Date(ticket.WE_TIMEOUT).toLocaleString('th-TH') : '-' }}</div>
         </div>
         
+        <div v-if="ticket.WE_PARENT">
+          <strong>บัตรชั่งก่อนหน้า:</strong>
+          <a href="#" @click.prevent="emit('view-ticket', ticket.WE_PARENT)" class="ticket-link">
+            {{ ticket.WE_PARENT }}
+          </a>
+        </div>
+
+        <div v-if="ticket.WE_CONT">
+          <strong>บัตรชั่งต่อเนื่อง:</strong>
+          <a href="#" @click.prevent="emit('view-ticket', ticket.WE_CONT)" class="ticket-link">
+            {{ ticket.WE_CONT }}
+          </a>
+        </div>
         <hr class="divider">
 
         <!-- Part 2: Items Area (โครงสร้างใหม่) -->

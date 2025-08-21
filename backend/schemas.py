@@ -23,13 +23,17 @@ class WeightTicketCreate(BaseModel):
     WE_WEIGHTIN: float
     WE_VENDOR: Optional[str] = None
     WE_VENDOR_CD: Optional[str] = None
+    # --- เพิ่ม WE_SEQ สำหรับเก็บเลขคิว ---
+    WE_SEQ: Optional[str] = None  # เลขคิวจากตาราง CarVisit
     
     # --- ข้อมูลสำหรับ "ชั่งแยก" ---
     WE_DIREF: Optional[str] = None
     WE_MAT_CD: Optional[str] = None
     WE_MAT: Optional[str] = None
-    WE_QTY: Optional[int] = None
+    WE_QTY: Optional[float] = None  # เปลี่ยนจาก int เป็น float
     WE_UOM: Optional[str] = None
+    # --- ข้อมูลสำหรับการชั่งต่อเนื่อง ---
+    parent_id: Optional[str] = None  # ID ของบัตรชั่งหลัก (สำหรับการอัปเดต WE_CONT)
     # --- ข้อมูลสำหรับ "ชั่งรวม" ---
     # รับ List ของ WeightTicketItemCreate เข้ามาได้
     items: Optional[List[WeightTicketItemCreate]] = None
@@ -63,6 +67,10 @@ class WeightTicket(WeightTicketBase):
     WE_UOM: Optional[str] = None
     WE_VENDOR_CD: Optional[str] = None
     WE_VENDOR: Optional[str] = None
+    # --- เพิ่ม WE_SEQ สำหรับการอ่านข้อมูล ---
+    WE_SEQ: Optional[str] = None  # เลขคิวจากตาราง CarVisit
+    # --- เพิ่ม WE_CONT สำหรับการอ่านข้อมูล ---
+    WE_CONT: Optional[str] = None  # ID ของบัตรชั่งต่อเนื่อง
     WE_WEIGHTNET: Optional[float]
     # -----------------------------
 
@@ -70,8 +78,8 @@ class WeightTicket(WeightTicketBase):
         from_attributes = True
 
 class WeightTicketItem(BaseModel):
-    WE_MAT_CD: str
-    WE_MAT: str
+    WE_MAT_CD: Optional[str] = None
+    WE_MAT: Optional[str] = None
     WE_QTY: Optional[float] = None
     WE_UOM: Optional[str] = None
     VBELN: str

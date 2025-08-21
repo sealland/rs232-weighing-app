@@ -47,9 +47,9 @@ def get_ticket_by_id(db: Session, ticket_id: str):
 
 def create_ticket(db: Session, ticket: schemas.WeightTicketCreate):
     """
-    สร้างบัตรชั่งใหม่ในฐานข้อมูล โดยมี WE_ID ตาม format Z1-YYMMDD-XXX (Running)
+    สร้างบัตรชั่งใหม่ในฐานข้อมูล และอัปเดตบัตรแม่หากเป็นการชั่งต่อเนื่อง
     """
-    # 1. สร้าง WE_ID
+    # 1. สร้าง WE_ID (Logic เดิมของคุณทั้งหมด)
     prefix = "Z1"
     today = datetime.now()
     buddhist_year_last_digit = str(today.year + 543)[-1] 
@@ -68,7 +68,8 @@ def create_ticket(db: Session, ticket: schemas.WeightTicketCreate):
         
     new_ticket_id = f"{id_prefix_for_today}{str(new_running_number).zfill(3)}"
     
-     # 1. สร้างบัตรหลัก (TBL_WEIGHT) ก่อน
+    # 2. สร้างบัตรหลัก (TBL_WEIGHT)
+    # *** เพิ่ม WE_PARENT และ WE_SEQ เข้าไปใน object ที่จะสร้าง ***
     db_ticket = models.WeightTicket(
         WE_ID=new_ticket_id,
         WE_LICENSE=ticket.WE_LICENSE,
@@ -78,20 +79,20 @@ def create_ticket(db: Session, ticket: schemas.WeightTicketCreate):
         WE_TYPE='I',
         WE_VENDOR_CD=ticket.WE_VENDOR_CD,
         WE_VENDOR=ticket.WE_VENDOR,
-        # ข้อมูลชั่งแยก
         WE_DIREF=ticket.WE_DIREF,
         WE_MAT_CD=ticket.WE_MAT_CD,
-        WE_MAT=ticket.WE_MAT
+        WE_MAT=ticket.WE_MAT,
+        # --- เพิ่มการบันทึกเลขคิว ---
+        WE_SEQ=ticket.WE_SEQ  # บันทึกเลขคิวจากข้อมูลที่ส่งมา
     )
     db.add(db_ticket)
     
-    # 2. ตรวจสอบว่ามีรายการ "ชั่งรวม" (items) ส่งมาด้วยหรือไม่
+    # 3. สร้างรายการ "ชั่งรวม" (items) (Logic เดิม)
     if ticket.items:
         new_db_items = []
         for item in ticket.items:
-            # สร้าง object สำหรับ TBL_WEIGHT_ITEM
             db_item = models.WeightTicketItem(
-                WE_ID=new_ticket_id, # <-- ใช้ ID ของบัตรใหม่
+                WE_ID=new_ticket_id,
                 VBELN=item.VBELN,
                 POSNR=item.POSNR,
                 WE_MAT_CD=item.WE_MAT_CD,
@@ -100,14 +101,37 @@ def create_ticket(db: Session, ticket: schemas.WeightTicketCreate):
                 WE_UOM=item.WE_UOM,
             )
             new_db_items.append(db_item)
-        
-        # เพิ่มรายการทั้งหมดลง session
         db.add_all(new_db_items)
 
-    # 3. Commit การเปลี่ยนแปลงทั้งหมด (ทั้ง TBL_WEIGHT และ TBL_WEIGHT_ITEM) ในครั้งเดียว
+    # 4. Commit การสร้างบัตรใหม่และรายการสินค้า
     db.commit()
     db.refresh(db_ticket)
     
+    # --- จุดสำคัญ: อัปเดตบัตรแม่เมื่อเป็นการชั่งต่อเนื่อง ---
+    if ticket.parent_id:
+        try:
+            # ค้นหาบัตรแม่จาก parent_id
+            parent_ticket = db.query(models.WeightTicket).filter(
+                models.WeightTicket.WE_ID == ticket.parent_id
+            ).first()
+
+            if parent_ticket:
+                # อัปเดต field WE_CONT ของบัตรแม่ ด้วย ID ของบัตรใหม่ (ชั่งต่อเนื่อง)
+                parent_ticket.WE_CONT = new_ticket_id
+                db.commit()
+                db.refresh(parent_ticket)
+                print(f"✅ Successfully updated parent ticket {ticket.parent_id} with child ID {new_ticket_id}")
+                print(f"   - Parent WE_CONT field updated to: {new_ticket_id}")
+            else:
+                print(f"⚠️  Warning: Parent ticket with ID {ticket.parent_id} not found.")
+                print(f"   - Cannot update WE_CONT field for parent ticket")
+
+        except Exception as e:
+            print(f"❌ Error updating parent ticket: {e}")
+            # ไม่ rollback เพราะบัตรใหม่ถูกสร้างสำเร็จแล้ว
+            # เราไม่ต้องการให้การสร้างบัตรใหม่ล้มเหลวเพราะการอัปเดตบัตรแม่มีปัญหา
+
+    # 6. คืนค่าบัตรที่สร้างใหม่
     return db_ticket
 
 # --- เพิ่มฟังก์ชันใหม่สำหรับอัปเดตการชั่งออก ---

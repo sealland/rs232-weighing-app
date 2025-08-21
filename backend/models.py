@@ -26,6 +26,10 @@ class WeightTicket(Base_scale):
     WE_UOM = Column(String, nullable=True)
     WE_VENDOR_CD = Column(String, nullable=True)
     WE_VENDOR = Column(String, nullable=True)
+    # --- เพิ่มฟิลด์ WE_SEQ สำหรับเก็บเลขคิว ---
+    WE_SEQ = Column(String, nullable=True)  # เลขคิวจากตาราง CarVisit
+    # --- เพิ่มฟิลด์ WE_CONT สำหรับเก็บ ID บัตรลูก (ชั่งต่อเนื่อง) ---
+    WE_CONT = Column(String, nullable=True)  # ID ของบัตรชั่งต่อเนื่อง
     # -----------------------------
     WE_WEIGHTNET = Column(Float, nullable=True)
 
@@ -83,6 +87,7 @@ class CarVisit(Base_pp): # <-- ใช้ Base_pp เพราะอยู่ใ�
     KUNNR = Column(String)         # รหัสลูกค้า
     Ship_point = Column(String)    # จุดขึ้นของ
     TICKET = Column(String, nullable=True)
+
 
     # บอก SQLAlchemy ว่า View นี้ไม่มี Primary Key ที่ชัดเจน
     # แต่ให้ใช้ WADAT_IST และ SEQ เป็นเหมือน Key ในการทำงาน
