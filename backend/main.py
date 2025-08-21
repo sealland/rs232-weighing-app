@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import date, timedelta
@@ -8,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import crud, models, schemas
 from database import SessionLocal_scale
 from database_pp import SessionLocal_pp
+from report_service import ReportService
 
 #models.Base.metadata.create_all(bind=engine) # บรรทัดนี้อาจจะไม่จำเป็นถ้าตารางมีอยู่แล้ว
 
@@ -176,6 +178,24 @@ def add_items_to_a_ticket(
         raise HTTPException(status_code=404, detail="Ticket not found")
     return updated_ticket
 # ----------------------------------------------
+
+# --- เพิ่ม Endpoints สำหรับรายงาน TCPDF ---
+@app.get("/api/reports/{ticket_id}/urls")
+def get_report_urls(ticket_id: str, db: Session = Depends(get_db_scale)):
+    """
+    API Endpoint สำหรับดึง URL ของรายงานทั้งสองประเภท
+    """
+    report_service = ReportService()
+    return report_service.get_report_urls(db, ticket_id=ticket_id)
+
+@app.get("/api/reports/{ticket_id}/type")
+def get_report_type(ticket_id: str, db: Session = Depends(get_db_scale)):
+    """
+    API Endpoint สำหรับตรวจสอบประเภทของรายงาน (ชั่งแยกหรือชั่งรวม)
+    """
+    report_service = ReportService()
+    report_type = report_service.get_report_type(db, ticket_id=ticket_id)
+    return {"ticket_id": ticket_id, "report_type": report_type}
 
 @app.options("/{full_path:path}")
 async def options_handler(full_path: str):

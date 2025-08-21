@@ -32,6 +32,10 @@ class WeightTicket(Base_scale):
     WE_CONT = Column(String, nullable=True)  # ID ของบัตรชั่งต่อเนื่อง
     # -----------------------------
     WE_WEIGHTNET = Column(Float, nullable=True)
+    # --- เพิ่มฟิลด์ที่จำเป็นสำหรับรายงาน ---
+    WE_DRIVER = Column(String, nullable=True)  # คนขับรถ
+    WE_TRUCK_CHAR = Column(String, nullable=True)  # ประเภทรถ
+    # -----------------------------
 
     items = relationship("WeightTicketItem", back_populates="ticket")
     # ------------------

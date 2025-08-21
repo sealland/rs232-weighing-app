@@ -72,6 +72,9 @@ class WeightTicket(WeightTicketBase):
     # --- เพิ่ม WE_CONT สำหรับการอ่านข้อมูล ---
     WE_CONT: Optional[str] = None  # ID ของบัตรชั่งต่อเนื่อง
     WE_WEIGHTNET: Optional[float]
+    # --- เพิ่มฟิลด์ที่จำเป็นสำหรับรายงาน ---
+    WE_DRIVER: Optional[str] = None  # คนขับรถ
+    WE_TRUCK_CHAR: Optional[str] = None  # ประเภทรถ
     # -----------------------------
 
     class Config:

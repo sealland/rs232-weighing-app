@@ -35,6 +35,10 @@ const continuousWeighingData = ref(null);
 const isCreatingTicket = ref(false)
 const isUpdatingTicket = ref(false)
 const isCancellingTicket = ref(false)
+const isPrintingReport = ref(false)
+
+// เพิ่ม state สำหรับการเลือกการดำเนินการ
+const printAction = ref('preview') // 'preview' หรือ 'print'
 
 
 // --- Computed Property ---
@@ -366,6 +370,64 @@ async function handleCancelTicket() {
     isCancellingTicket.value = false;
   }
 }
+
+// --- ฟังก์ชันสำหรับพิมพ์รายงาน ---
+async function handlePrintReport() {
+  if (!selectedTicketId.value) {
+    alert('กรุณาเลือกบัตรชั่งที่ต้องการพิมพ์รายงาน');
+    return;
+  }
+
+  if (!printAction.value) {
+    alert('กรุณาเลือกการดำเนินการ (Preview หรือ สั่งพิมพ์)');
+    return;
+  }
+
+  isPrintingReport.value = true;
+  try {
+    // ดึง URL ของรายงาน
+    const response = await fetch(`${API_BASE_URL}/api/reports/${selectedTicketId.value}/urls`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reportData = await response.json();
+    const reportUrl = reportData.recommended_url;
+
+    if (printAction.value === 'preview') {
+      // Preview - เปิดในแท็บใหม่
+      window.open(reportUrl, '_blank');
+      alert('เปิดรายงานในแท็บใหม่แล้ว!');
+    } else {
+      // สั่งพิมพ์ - ใช้ iframe เพื่อสั่งพิมพ์
+      const printFrame = document.createElement('iframe');
+      printFrame.style.display = 'none';
+      printFrame.src = reportUrl;
+      
+      printFrame.onload = function() {
+        try {
+          printFrame.contentWindow.print();
+          setTimeout(() => {
+            document.body.removeChild(printFrame);
+          }, 1000);
+        } catch (error) {
+          console.error('Print error:', error);
+          alert('ไม่สามารถสั่งพิมพ์ได้ กรุณาลองใหม่');
+        }
+      };
+      
+      document.body.appendChild(printFrame);
+      alert('กำลังสั่งพิมพ์...');
+    }
+    
+  } catch (error) {
+    console.error('Failed to handle report:', error);
+    alert('เกิดข้อผิดพลาดในการดำเนินการรายงาน');
+  } finally {
+    isPrintingReport.value = false;
+  }
+}
 async function handleTicketUpdate(eventData) {
   // ดึงค่ามาจาก eventData ที่ส่งมาใหม่
   const updatePayload = eventData.payload;
@@ -536,6 +598,56 @@ onMounted(async () => {
               </button>
             </template>
             <!-- ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ -->
+
+            <!-- ส่วนพิมพ์รายงาน (แสดงเสมอเมื่อมีบัตรที่เลือก) -->
+            <div class="print-report-section">
+              <!-- หัวข้อส่วนพิมพ์รายงาน -->
+              <div class="print-section-header">
+                <span class="print-icon">📄</span>
+                <span class="print-title">พิมพ์รายงาน</span>
+              </div>
+              
+              <!-- ตัวเลือกการดำเนินการ -->
+              <div class="print-options">
+                <label class="print-option" :class="{ 'selected': printAction === 'preview' }">
+                  <input 
+                    type="radio" 
+                    v-model="printAction" 
+                    value="preview" 
+                    name="printAction"
+                  >
+                  <div class="option-content">
+                    <span class="option-icon">🔍</span>
+                    <span class="option-text">Preview</span>
+                  </div>
+                </label>
+                
+                <label class="print-option" :class="{ 'selected': printAction === 'print' }">
+                  <input 
+                    type="radio" 
+                    v-model="printAction" 
+                    value="print" 
+                    name="printAction"
+                  >
+                  <div class="option-content">
+                    <span class="option-icon">🖨️</span>
+                    <span class="option-text">พิมพ์</span>
+                  </div>
+                </label>
+              </div>
+              
+              <!-- ปุ่มดำเนินการ -->
+              <button 
+                class="action-btn print-btn"
+                @click="handlePrintReport"
+                :disabled="isPrintingReport || !printAction"
+              >
+                <span class="button-icon">
+                  {{ isPrintingReport ? '⏳' : '🚀' }}
+                </span>
+                {{ isPrintingReport ? 'กำลังดำเนินการ...' : 'ดำเนินการ' }}
+              </button>
+            </div>
 
           </div>
         </div>
@@ -815,7 +927,7 @@ main {
 }
 
 .weight-display {
-  font-size: 6rem;
+  font-size: 12rem;
   font-weight: bold;
   color: var(--primary-color);
   background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
@@ -947,6 +1059,7 @@ main {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.75rem;
+  margin-bottom: 0.5rem;
 }
 
 .action-btn {
@@ -1244,5 +1357,152 @@ th {
 
 .ticket-row:hover {
   background-color: #f1f5f9;
+}
+
+/* Print Report Section - ปรับปรุงใหม่ */
+.print-report-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  margin-top: 0.5rem;
+}
+
+.print-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--border-color);
+}
+
+.print-icon {
+  font-size: 1.1rem;
+}
+
+.print-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.print-options {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.print-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 0.6rem;
+  border-radius: 8px;
+  background: white;
+  border: 2px solid var(--border-color);
+  transition: all 0.2s ease-in-out;
+  position: relative;
+  overflow: hidden;
+}
+
+.print-option:hover {
+  border-color: var(--primary-color);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.15);
+}
+
+.print-option.selected {
+  border-color: var(--primary-color);
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
+}
+
+.print-option input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.option-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  width: 100%;
+  text-align: center;
+}
+
+.option-icon {
+  font-size: 1.2rem;
+  margin-bottom: 0.2rem;
+}
+
+.option-text {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.print-option.selected .option-text {
+  color: var(--primary-color);
+}
+
+/* ปุ่มดำเนินการ */
+.print-btn {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  border: none;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  box-shadow: 0 2px 4px rgba(245, 158, 11, 0.3);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.print-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(245, 158, 11, 0.4);
+}
+
+.print-btn:disabled {
+  background: linear-gradient(135deg, #9ca3af 0%, #6b7280 100%);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Responsive Design สำหรับส่วนพิมพ์รายงาน */
+@media (max-width: 768px) {
+  .print-options {
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  
+  .print-option {
+    padding: 0.8rem;
+  }
+  
+  .option-content {
+    flex-direction: row;
+    justify-content: flex-start;
+    text-align: left;
+    gap: 0.6rem;
+  }
+  
+  .option-icon {
+    margin-bottom: 0;
+  }
 }
 </style>
