@@ -13,16 +13,10 @@ from database_pp import SessionLocal_pp
 
 app = FastAPI()
 
-origins = [
-    "http://localhost:5173",
-    "http://192.168.132.7:5173", # URL ของ Vue dev server
-    # คุณอาจจะเพิ่ม URL อื่นๆ ในอนาคต เช่น "http://your-production-domain.com"
-    
-]
-
+# แก้ไขการตั้งค่า CORS - กลับไปใช้ allow_origins=["*"] เพื่อความง่าย
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # อนุญาตทุก Origin
+    allow_origins=["*"],  # กลับไปใช้ ["*"] เพื่อให้แน่ใจว่าไม่มีปัญหา CORS
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -182,6 +176,12 @@ def add_items_to_a_ticket(
         raise HTTPException(status_code=404, detail="Ticket not found")
     return updated_ticket
 # ----------------------------------------------
+
+@app.options("/{full_path:path}")
+async def options_handler(full_path: str):
+    """Handle OPTIONS requests for CORS preflight"""
+    return {"message": "OK"}
+
 # เพิ่มที่ท้ายไฟล์
 if __name__ == "__main__":
     import uvicorn

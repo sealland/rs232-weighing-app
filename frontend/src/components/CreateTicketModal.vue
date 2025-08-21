@@ -236,22 +236,25 @@ async function handleSave() {
     
     console.log('Source data:', sourceData);
     
+    // แก้ไขส่วนการสร้าง ticketData ในฟังก์ชัน handleSave
     const ticketData = {
       WE_LICENSE: sourceData.CARLICENSE,
-      WE_WEIGHTIN: parseFloat(finalWeightIn.value), // แปลงเป็น float
+      WE_WEIGHTIN: parseFloat(finalWeightIn.value),
       WE_VENDOR: sourceData.AR_NAME,
       WE_VENDOR_CD: sourceData.KUNNR,
       WE_SEQ: selectedQueueObject.SEQ,
       parent_id: sourceData.PARENT_ID || null,
-      // ส่งรายการสินค้าเป็น undefined ถ้าไม่มี (ไม่บังคับ)
-      items: finalCombinedItems.value.length > 0 ? finalCombinedItems.value.map(item => ({
-        VBELN: item.VBELN,
-        POSNR: item.POSNR,
-        WE_MAT_CD: item.WE_MAT_CD || null,
-        WE_MAT: item.WE_MAT || null,
-        WE_QTY: parseFloat(item.WE_QTY) || null,
-        WE_UOM: item.WE_UOM || null
-      })) : undefined
+      // แก้ไขการส่งรายการสินค้า - ใช้ข้อมูลจาก Shipment Plan
+      items: finalCombinedItems.value.length > 0 ? finalCombinedItems.value.map(item => {
+        return {
+          VBELN: item.VBELN,
+          POSNR: item.POSNR,
+          WE_MAT_CD: item.MATNR || null,  // ใช้ MATNR จาก Shipment Plan
+          WE_MAT: item.ARKTX || null,     // ใช้ ARKTX จาก Shipment Plan
+          WE_QTY: parseFloat(item.editable_qty || item.LFIMG || 0),  // ใช้ editable_qty หรือ LFIMG
+          WE_UOM: item.VRKME || null      // ใช้ VRKME จาก Shipment Plan
+        };
+      }) : undefined
     };
     
     console.log('Sending ticket data:', JSON.stringify(ticketData, null, 2));
