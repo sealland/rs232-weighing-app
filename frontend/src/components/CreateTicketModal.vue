@@ -34,7 +34,7 @@ const carQueueError = ref(null);
 async function fetchCarQueue() {
   carQueueLoading.value = true;
   carQueueError.value = null;
-  const API_BASE_URL = 'http://localhost:8000';
+  const API_BASE_URL = 'http://192.168.132.7:8000';
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/car-queue/`);
@@ -81,6 +81,8 @@ const hasSelectedSearchResults = computed(() => {
 watch(() => props.visible, async (isVisible) => {
   if (!isVisible) return;
   
+  console.log('Modal opened with initialWeightIn:', props.initialWeightIn);
+  
   // Reset state
   autoFilledData.value = {
     CARLICENSE: '',
@@ -92,7 +94,9 @@ watch(() => props.visible, async (isVisible) => {
   };
   
   selectedQueueSeq.value = '';
-  finalWeightIn.value = null;
+  // แก้ไขตรงนี้ - ใช้ค่าจาก props.initialWeightIn
+  finalWeightIn.value = props.initialWeightIn || 0;
+  console.log('finalWeightIn set to:', finalWeightIn.value);
   finalCombinedItems.value = [];
   
   // Fetch car queue data
@@ -111,8 +115,20 @@ watch(() => props.visible, async (isVisible) => {
     
     // Set initial value for queue dropdown
     selectedQueueSeq.value = props.continuousDataFromPrevTicket.WE_SEQ || '';
+    
+    // ตั้งค่าน้ำหนักจาก continuous weighing data
+    if (props.continuousDataFromPrevTicket.INITIAL_WEIGHT_IN) {
+      finalWeightIn.value = props.continuousDataFromPrevTicket.INITIAL_WEIGHT_IN;
+    }
   }
 });
+
+// เพิ่ม watcher ใหม่สำหรับ initialWeightIn
+watch(() => props.initialWeightIn, (newWeight) => {
+  if (newWeight && newWeight > 0) {
+    finalWeightIn.value = newWeight;
+  }
+}, { immediate: true });
 
 
 // --- Functions for Item Management ---
@@ -122,7 +138,7 @@ async function handleSearchPlan() {
   searchLoading.value = true;
   searchError.value = null;
   searchResults.value = [];
-  const API_BASE_URL = 'http://localhost:8000';
+  const API_BASE_URL = 'http://192.168.132.7:8000';
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/shipment-plans/${planIdToSearch.value.trim()}`);
@@ -183,23 +199,51 @@ function removeFromCart(index) {
 // --- Main Save Function ---
 async function handleSave() {
   try {
-    const sourceData = props.continuousDataFromPrevTicket || autoFilledData.value;
+    console.log('=== Starting handleSave ===');
     
-    // Validate required fields
-    if (!sourceData.CARLICENSE || !sourceData.AR_NAME || !finalWeightIn.value) {
-      alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+    // ตรวจสอบข้อมูลที่จำเป็น
+    if (!selectedQueueSeq.value) {
+      alert('กรุณาเลือกคิวรถ');
       return;
     }
     
+    if (!finalWeightIn.value || finalWeightIn.value <= 0) {
+      alert('กรุณาตรวจสอบน้ำหนักชั่งเข้า');
+      return;
+    }
+    
+    console.log('Selected queue seq:', selectedQueueSeq.value);
+    console.log('Final weight in:', finalWeightIn.value);
+    
+    // หาข้อมูลคิวรถที่เลือก
     const selectedQueueObject = carQueueData.value.find(q => q.SEQ === selectedQueueSeq.value);
+    
+    if (!selectedQueueObject) {
+      alert('ไม่พบข้อมูลคิวรถที่เลือก');
+      return;
+    }
+    
+    console.log('Selected queue object:', selectedQueueObject);
+    
+    // ใช้ข้อมูลจากคิวรถที่เลือก หรือจาก continuous weighing data
+    const sourceData = props.continuousDataFromPrevTicket || {
+      CARLICENSE: selectedQueueObject.CARLICENSE,
+      AR_NAME: selectedQueueObject.AR_NAME,
+      KUNNR: selectedQueueObject.KUNNR || '',
+      PARENT_ID: null,
+      WE_SEQ: selectedQueueObject.SEQ
+    };
+    
+    console.log('Source data:', sourceData);
     
     const ticketData = {
       WE_LICENSE: sourceData.CARLICENSE,
-      WE_WEIGHTIN: finalWeightIn.value,
+      WE_WEIGHTIN: parseFloat(finalWeightIn.value), // แปลงเป็น float
       WE_VENDOR: sourceData.AR_NAME,
       WE_VENDOR_CD: sourceData.KUNNR,
-      WE_SEQ: selectedQueueObject?.SEQ || props.continuousDataFromPrevTicket?.WE_SEQ,
+      WE_SEQ: selectedQueueObject.SEQ,
       parent_id: sourceData.PARENT_ID || null,
+      // ส่งรายการสินค้าเป็น undefined ถ้าไม่มี (ไม่บังคับ)
       items: finalCombinedItems.value.length > 0 ? finalCombinedItems.value.map(item => ({
         VBELN: item.VBELN,
         POSNR: item.POSNR,
@@ -210,7 +254,9 @@ async function handleSave() {
       })) : undefined
     };
     
-    const response = await fetch('http://localhost:8000/api/tickets/', {
+    console.log('Sending ticket data:', JSON.stringify(ticketData, null, 2));
+    
+    const response = await fetch('http://192.168.132.7:8000/api/tickets/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -218,18 +264,25 @@ async function handleSave() {
       body: JSON.stringify(ticketData)
     });
     
+    console.log('Response status:', response.status);
+    console.log('Response ok:', response.ok);
+    
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`เกิดข้อผิดพลาดในการสร้างบัตรชั่ง: ${errorData.detail || 'ไม่ทราบสาเหตุ'}`);
+      const errorText = await response.text();
+      console.error('Error response:', errorText);
+      throw new Error(`เกิดข้อผิดพลาดในการสร้างบัตรชั่ง: ${errorText}`);
     }
     
     const newTicket = await response.json();
+    console.log('New ticket created:', newTicket);
+    
+    alert('บันทึกบัตรชั่งใหม่สำเร็จ!');
     emit('ticket-created', newTicket);
     emit('close');
     
   } catch (error) {
     console.error('Error creating ticket:', error);
-    alert(error.message);
+    alert(`เกิดข้อผิดพลาด: ${error.message}`);
   }
 }
 
@@ -308,7 +361,7 @@ async function handleSave() {
 
           <!-- ส่วนตะกร้าสินค้า (Final List) -->
           <div class="final-list-container">
-            <label>รายการสินค้าในบัตรชั่ง</label>
+            <label>รายการสินค้าในบัตรชั่ง (ไม่บังคับ)</label>
             <div v-if="finalCombinedItems.length === 0" class="empty-list">
               -- ยังไม่มีรายการ -- <br>
               <small>(หากไม่เพิ่มรายการ จะเป็นการสร้างบัตรชั่งแบบ 'รอลงรายการ')</small>

@@ -210,7 +210,7 @@ async function handleSearchPlan() {
   searchLoading.value = true;
   searchError.value = null;
   searchResults.value = [];
-  const API_BASE_URL = 'http://localhost:8000';
+  const API_BASE_URL = 'http://192.168.132.7:8000';
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/shipment-plans/${planIdToSearch.value.trim()}`);

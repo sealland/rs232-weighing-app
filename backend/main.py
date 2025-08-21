@@ -14,8 +14,10 @@ from database_pp import SessionLocal_pp
 app = FastAPI()
 
 origins = [
-    "http://localhost:5173", # URL ของ Vue dev server
+    "http://localhost:5173",
+    "http://192.168.132.7:5173", # URL ของ Vue dev server
     # คุณอาจจะเพิ่ม URL อื่นๆ ในอนาคต เช่น "http://your-production-domain.com"
+    
 ]
 
 app.add_middleware(
@@ -180,3 +182,12 @@ def add_items_to_a_ticket(
         raise HTTPException(status_code=404, detail="Ticket not found")
     return updated_ticket
 # ----------------------------------------------
+# เพิ่มที่ท้ายไฟล์
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",  # เปลี่ยนจาก localhost เป็น 0.0.0.0
+        port=8000,
+        reload=True
+    )

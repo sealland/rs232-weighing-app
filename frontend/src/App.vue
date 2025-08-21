@@ -3,6 +3,9 @@ import { ref, onMounted, computed, watch } from 'vue'
 import TicketDetailModal from './components/TicketDetailModal.vue'
 import CreateTicketModal from './components/CreateTicketModal.vue'
 
+const API_BASE_URL = 'http://192.168.132.7:8000';  // เปลี่ยนเป็น IP ของเครื่อง Dev
+const WEBSOCKET_URL = 'ws://192.168.132.7:8765';   // เปลี่ยนเป็น IP ของเครื่อง Dev
+
 // --- State Management ---
 const currentWeight = ref('0')
 const openTickets = ref([])
@@ -47,8 +50,8 @@ const selectedTicketObject = computed(() => {
 });
 
 // --- API & WebSocket Config ---
-const API_BASE_URL = 'http://localhost:8000';
-const WEBSOCKET_URL = 'ws://localhost:8765';
+// const API_BASE_URL = 'http://192.168.132.7:8000';
+// const WEBSOCKET_URL = 'ws://localhost:8765';
 
 // --- Functions: Data Fetching ---
 async function fetchOpenTickets(dateStr) {
@@ -113,6 +116,46 @@ async function openCreateTicketModal() {
   initialWeightForNewTicket.value = weightValue;
   isCreateModalVisible.value = true;
 }
+
+// เพิ่มฟังก์ชันใหม่สำหรับจัดการเมื่อสร้างบัตรชั่งใหม่สำเร็จ
+async function handleTicketCreated(newTicket) {
+  console.log('New ticket created:', newTicket);
+  
+  // อัปเดตรายการบัตรชั่งที่กำลังดำเนินการ
+  await fetchOpenTickets(selectedDate.value);
+  
+  // อัปเดตรายการบัตรชั่งที่เสร็จสิ้นแล้ว
+  await fetchCompletedTickets(selectedDate.value);
+  
+  // ปิด modal
+  isCreateModalVisible.value = false;
+  
+  // เลือกบัตรชั่งที่สร้างใหม่โดยอัตโนมัติ
+  selectedTicketId.value = newTicket.WE_ID;
+  
+  // ตรวจสอบว่าบัตรชั่งใหม่อยู่ในตารางไหน
+  const isInOpenTickets = openTickets.value.some(ticket => ticket.WE_ID === newTicket.WE_ID);
+  const isInCompletedTickets = completedTickets.value.some(ticket => ticket.WE_ID === newTicket.WE_ID);
+  
+  // สลับไปยัง tab ที่มีบัตรชั่งใหม่
+  if (isInOpenTickets) {
+    activeTab.value = 'inProgress';
+  } else if (isInCompletedTickets) {
+    activeTab.value = 'completed';
+  }
+  
+  // แสดงข้อความสำเร็จ
+  alert(`สร้างบัตรชั่งใหม่สำเร็จ!\nเลขที่บัตร: ${newTicket.WE_ID}`);
+  
+  // เลื่อนไปยังบัตรชั่งที่เลือก (optional)
+  setTimeout(() => {
+    const selectedElement = document.querySelector(`[data-ticket-id="${newTicket.WE_ID}"]`);
+    if (selectedElement) {
+      selectedElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, 100);
+}
+
 async function showTicketDetails(ticket_id) {
   selectTicket(ticket_id);
   try {
@@ -238,9 +281,34 @@ async function handleWeighOut() {
       body: JSON.stringify({ WE_WEIGHTOUT: weightOutValue }),
     });
     if (!response.ok) throw new Error('Server error during weigh-out!');
-    alert('บันทึกน้ำหนักชั่งออกสำเร็จ!');
-    selectedTicketId.value = null;
+    
+    // อัปเดตรายการบัตรชั่ง
     await Promise.all([ fetchOpenTickets(selectedDate.value), fetchCompletedTickets(selectedDate.value) ]);
+    
+    // เลือกบัตรชั่งที่อัปเดตแล้วโดยอัตโนมัติ
+    selectedTicketId.value = ticketIdToUpdate;
+    
+    // ตรวจสอบว่าบัตรชั่งที่อัปเดตแล้วอยู่ในตารางไหน
+    const isInOpenTickets = openTickets.value.some(ticket => ticket.WE_ID === ticketIdToUpdate);
+    const isInCompletedTickets = completedTickets.value.some(ticket => ticket.WE_ID === ticketIdToUpdate);
+    
+    // สลับไปยัง tab ที่มีบัตรชั่งที่อัปเดตแล้ว
+    if (isInOpenTickets) {
+      activeTab.value = 'inProgress';
+    } else if (isInCompletedTickets) {
+      activeTab.value = 'completed';
+    }
+    
+    // เลื่อนไปยังบัตรชั่งที่เลือก
+    setTimeout(() => {
+      const selectedElement = document.querySelector(`[data-ticket-id="${ticketIdToUpdate}"]`);
+      if (selectedElement) {
+        selectedElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+    
+    alert('บันทึกน้ำหนักชั่งออกสำเร็จ!');
+    
   } catch (error) {
     console.error('Failed to update weigh-out:', error);
     alert('เกิดข้อผิดพลาดในการบันทึกน้ำหนักชั่งออก');
@@ -263,9 +331,34 @@ async function handleCancelTicket() {
       method: 'DELETE',
     });
     if (!response.ok) throw new Error('Server error during cancellation!');
-    alert('ยกเลิกบัตรชั่งสำเร็จ!');
-    selectedTicketId.value = null;
+    
+    // อัปเดตรายการบัตรชั่ง
     await fetchOpenTickets(selectedDate.value);
+    
+    // เลือกบัตรชั่งที่ยกเลิกแล้วโดยอัตโนมัติ (ถ้ายังอยู่ในรายการ)
+    selectedTicketId.value = ticketIdToCancel;
+    
+    // ตรวจสอบว่าบัตรชั่งที่ยกเลิกแล้วยังอยู่ในตารางหรือไม่
+    const isStillInOpenTickets = openTickets.value.some(ticket => ticket.WE_ID === ticketIdToCancel);
+    
+    if (isStillInOpenTickets) {
+      // สลับไปยัง tab ที่มีบัตรชั่งที่ยกเลิกแล้ว
+      activeTab.value = 'inProgress';
+      
+      // เลื่อนไปยังบัตรชั่งที่เลือก
+      setTimeout(() => {
+        const selectedElement = document.querySelector(`[data-ticket-id="${ticketIdToCancel}"]`);
+        if (selectedElement) {
+          selectedElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
+    } else {
+      // ถ้าบัตรชั่งหายไปจากรายการ ให้ล้างการเลือก
+      selectedTicketId.value = null;
+    }
+    
+    alert('ยกเลิกบัตรชั่งสำเร็จ!');
+    
   } catch (error) {
     console.error('Failed to cancel ticket:', error);
     alert('เกิดข้อผิดพลาดในการยกเลิกบัตรชั่ง');
@@ -492,6 +585,7 @@ onMounted(async () => {
                   :key="ticket.WE_ID" 
                   @click="selectTicket(ticket.WE_ID)" 
                   :class="{ 'clickable-row': true, 'active-row': selectedTicketId === ticket.WE_ID }"
+                  :data-ticket-id="ticket.WE_ID"
                 >
                   <td>
                     <button class="detail-btn" @click.stop="showTicketDetails(ticket.WE_ID)">
@@ -532,6 +626,7 @@ onMounted(async () => {
                   :key="ticket.WE_ID" 
                   @click="selectTicket(ticket.WE_ID)"
                   :class="{ 'clickable-row': true, 'active-row': selectedTicketId === ticket.WE_ID }"
+                  :data-ticket-id="ticket.WE_ID"
                 >
                   <td>
                     <button class="detail-btn" @click.stop="showTicketDetails(ticket.WE_ID)">
@@ -568,12 +663,12 @@ onMounted(async () => {
     />
     <!-- *** เพิ่ม Prop ใหม่ 'continuousData' เข้าไป *** -->
     <CreateTicketModal
-      :visible="isCreateModalVisible"
-      :initial-weight-in="initialWeightForNewTicket"
-      :car-queue="carQueue"
-      :continuous-data-from-prev-ticket="continuousWeighingData"
-      @close="isCreateModalVisible = false"
-      @save="handleCreateTicket"
+    :visible="isCreateModalVisible"
+    :initial-weight-in="initialWeightForNewTicket"
+    :car-queue="carQueue"
+    :continuous-data-from-prev-ticket="continuousWeighingData"
+    @close="isCreateModalVisible = false"
+    @ticket-created="handleTicketCreated"
     />
   </div>
 </template>
@@ -1134,5 +1229,20 @@ th {
     font-size: 3rem;
     padding: 1rem;
   }
+}
+
+/* เพิ่ม CSS สำหรับ highlight บรรทัดที่เลือก */
+.selected-row {
+  background-color: var(--highlight-color) !important;
+  border-left: 4px solid var(--primary-color);
+}
+
+.ticket-row {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.ticket-row:hover {
+  background-color: #f1f5f9;
 }
 </style>

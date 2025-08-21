@@ -15,4 +15,17 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     },
   },
+  server: {
+    host: '0.0.0.0',
+    port: 5173,
+    proxy: {
+      // ทุกคำขอที่ขึ้นต้นด้วย /api จะถูก forward ไปที่ backend
+      '/api': {
+        target: 'http://192.168.132.7:8000', // หรือ 'http://199.1.2.3:3000'
+        changeOrigin: true,
+        secure: false,
+        ws: true,
+      }
+    }
+  }
 })
