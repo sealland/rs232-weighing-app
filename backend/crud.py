@@ -258,16 +258,38 @@ def add_items_to_ticket(db: Session, ticket_id: str, items: List[schemas.WeightT
     db.refresh(db_ticket)
     return db_ticket
 # ------------------------------------------------
-# --- เพิ่มฟังก์ชันใหม่สำหรับดึงคิวรถ ---
+# แทนที่ฟังก์ชัน get_available_car_queue:
 def get_available_car_queue(db: Session):
     """
     ดึงข้อมูลคิวรถของวันนี้ ที่ Ship_point = 'P8' และยังไม่มีการสร้างบัตรชั่ง (TICKET IS NULL)
     """
-    today = date.today()
-    return db.query(models.CarVisit).filter(
-        models.CarVisit.WADAT_IST == today,
-        models.CarVisit.Ship_point == 'P8'
-    ).order_by(models.CarVisit.SEQ).all()
+    try:
+        from sqlalchemy import text
+        today = date.today()
+        
+        # ทดสอบการเชื่อมต่อ database ก่อน
+        try:
+            test_query = db.execute(text("SELECT 1")).fetchone()
+        except Exception as db_error:
+            print(f"ERROR: Database connection failed: {db_error}")
+            return []
+        
+        # ดึงข้อมูลคิวรถสำหรับวันนี้
+        try:
+            car_queue = db.query(models.CarVisit).filter(
+                models.CarVisit.WADAT_IST == today,
+                models.CarVisit.Ship_point == 'P8'
+            ).order_by(models.CarVisit.SEQ).all()
+            
+            return car_queue
+            
+        except Exception as orm_error:
+            print(f"ERROR: Cannot query car visits: {orm_error}")
+            return []
+        
+    except Exception as e:
+        print(f"ERROR in get_available_car_queue: {e}")
+        return []
 # ------------------------------------
 
 # --- เพิ่มฟังก์ชันใหม่สำหรับ "แทนที่" รายการสินค้า ---

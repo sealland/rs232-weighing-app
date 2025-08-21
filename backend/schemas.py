@@ -114,10 +114,13 @@ class ShipmentPlanItem(BaseModel):
 
 # --- เพิ่ม Schema ใหม่สำหรับ 1 รายการในคิวรถ ---
 class CarVisit(BaseModel):
+    WADAT_IST: date
     SEQ: str
-    CARLICENSE: str
+    CARLICENSE: Optional[str] = None  # เปลี่ยนเป็น Optional
     AR_NAME: Optional[str] = None
     KUNNR: Optional[str] = None
+    Ship_point: Optional[str] = None
+    TICKET: Optional[str] = None
 
     class Config:
         from_attributes = True

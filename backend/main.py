@@ -122,7 +122,7 @@ def update_ticket_weigh_out(
 @app.get("/api/tickets/{ticket_id}", response_model=schemas.WeightTicketDetails)
 def read_ticket_details(ticket_id: str, db: Session = Depends(get_db_scale)):
     """
-    API Endpoint สำหรับดึงข้อมูลบัตรชั่งใบเดียวแบบละเอียด
+    API Endpoint สำหรับดึงข้อมูลบัตรชั่งใบเดียด
     """
     db_ticket = crud.get_ticket_by_id(db, ticket_id=ticket_id)
     if db_ticket is None:
@@ -138,8 +138,15 @@ def read_shipment_plan(plan_id: str, db: Session = Depends(get_db_pp)):
 # --- เพิ่ม Endpoint ใหม่สำหรับดึงคิวรถ ---
 @app.get("/api/car-queue/", response_model=List[schemas.CarVisit])
 def read_car_queue(db: Session = Depends(get_db_pp)):
-    car_queue = crud.get_available_car_queue(db)
-    return car_queue
+    """
+    API Endpoint สำหรับดึงข้อมูลคิวรถ
+    """
+    try:
+        car_queue = crud.get_available_car_queue(db)
+        return car_queue
+    except Exception as e:
+        print(f"ERROR in /api/car-queue/ endpoint: {e}")
+        return []
 # ---------------------------------------
 # --- เพิ่ม Endpoint ใหม่สำหรับ "แทนที่" รายการสินค้า ---
 @app.put("/api/tickets/{ticket_id}/items", response_model=schemas.WeightTicketDetails)
