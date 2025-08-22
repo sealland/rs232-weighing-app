@@ -93,7 +93,9 @@ watch(() => props.visible, async (isVisible) => {
     WE_SEQ: ''
   };
   
+  // เคลียร์ค่าคิวที่เลือก
   selectedQueueSeq.value = '';
+  
   // แก้ไขตรงนี้ - ใช้ค่าจาก props.initialWeightIn
   finalWeightIn.value = props.initialWeightIn || 0;
   console.log('finalWeightIn set to:', finalWeightIn.value);
@@ -113,7 +115,7 @@ watch(() => props.visible, async (isVisible) => {
       WE_SEQ: props.continuousDataFromPrevTicket.WE_SEQ || ''
     };
     
-    // Set initial value for queue dropdown
+    // Set initial value for queue dropdown (สำหรับชั่งต่อเนื่อง)
     selectedQueueSeq.value = props.continuousDataFromPrevTicket.WE_SEQ || '';
     
     // ตั้งค่าน้ำหนักจาก continuous weighing data
@@ -318,6 +320,14 @@ async function handleSave() {
           <div class="data-display"><strong>ลูกค้า:</strong> {{ (selectedQueueObject || autoFilledData)?.AR_NAME }}</div>
         </div>
 
+        <!-- แสดงข้อความเมื่อเป็นชั่งต่อเนื่อง -->
+        <div v-if="props.continuousDataFromPrevTicket && selectedQueueSeq" class="continuous-weighing-info">
+          <div class="info-message">
+            <span class="info-icon">🔄</span>
+            <span>คิวนี้ถูกนำมาจากบัตรชั่งหลัก (สามารถเปลี่ยนได้)</span>
+          </div>
+        </div>
+
         <hr class="divider">
 
         <!-- ==================================================================== -->
@@ -502,5 +512,26 @@ async function handleSave() {
   color: #dc3545;
   font-weight: bold;
   margin-top: 0.5rem;
+}
+
+/* CSS สำหรับข้อความชั่งต่อเนื่อง */
+.continuous-weighing-info {
+  margin-top: 0.5rem;
+}
+
+.info-message {
+  padding: 0.8rem;
+  background-color: #e3f2fd;
+  border: 1px solid #2196f3;
+  border-radius: 4px;
+  color: #1976d2;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.info-icon {
+  font-size: 1.1rem;
 }
 </style>

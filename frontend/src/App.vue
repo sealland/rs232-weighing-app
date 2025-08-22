@@ -131,6 +131,10 @@ async function openCreateTicketModal() {
      return;
   }
   initialWeightForNewTicket.value = weightValue;
+  
+  // เคลียร์ข้อมูลชั่งต่อเนื่องเมื่อกด "สร้างบัตรชั่งใหม่"
+  continuousWeighingData.value = null;
+  
   isCreateModalVisible.value = true;
 }
 
