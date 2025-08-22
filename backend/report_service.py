@@ -1,14 +1,13 @@
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from models import WeightTicket, WeightTicketItem
-from pdf_generator import WeightTicketPDFGenerator
 from fastapi import HTTPException
-from io import BytesIO
 
 class ReportService:
     def __init__(self):
-        """Initialize Report Service with PDF Generator"""
-        self.pdf_generator = WeightTicketPDFGenerator()
+        """Initialize Report Service with TCPDF URLs"""
+        self.separate_report_url = "https://reports.zubbsteel.com/zticket_a5.php"
+        self.combined_report_url = "https://reports.zubbsteel.com/zticket_a4.php"
     
     def get_ticket_with_items(self, db: Session, ticket_id: str) -> tuple[WeightTicket, List[WeightTicketItem]]:
         """
@@ -24,44 +23,30 @@ class ReportService:
         
         return ticket, items
     
-    def generate_separate_weighing_pdf(self, db: Session, ticket_id: str) -> BytesIO:
+    def get_report_urls(self, db: Session, ticket_id: str) -> dict:
         """
-        สร้างรายงานบัตรชั่งแบบชั่งแยก (A5)
-        """
-        try:
-            # ดึงข้อมูลบัตรชั่ง
-            ticket, _ = self.get_ticket_with_items(db, ticket_id)
-            
-            # สร้าง PDF
-            pdf_buffer = self.pdf_generator.generate_separate_weighing_report(ticket)
-            
-            return pdf_buffer
-            
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error generating PDF: {str(e)}")
-    
-    def generate_combined_weighing_pdf(self, db: Session, ticket_id: str) -> BytesIO:
-        """
-        สร้างรายงานบัตรชั่งแบบชั่งรวม (A4)
+        สร้าง URL สำหรับรายงานทั้งสองประเภท
         """
         try:
-            # ดึงข้อมูลบัตรชั่งพร้อมรายการสินค้า
             ticket, items = self.get_ticket_with_items(db, ticket_id)
             
-            # ตรวจสอบว่ามีรายการสินค้าหรือไม่
-            if not items:
-                raise HTTPException(
-                    status_code=400, 
-                    detail="This ticket has no items. Use separate weighing report instead."
-                )
+            # สร้าง URL สำหรับรายงานแต่ละประเภท
+            separate_url = f"{self.separate_report_url}?id={ticket_id}"
+            combined_url = f"{self.combined_report_url}?id={ticket_id}"
             
-            # สร้าง PDF
-            pdf_buffer = self.pdf_generator.generate_combined_weighing_report(ticket, items)
+            # ตรวจสอบประเภทรายงาน
+            report_type = "combined" if items else "separate"
             
-            return pdf_buffer
+            return {
+                "ticket_id": ticket_id,
+                "report_type": report_type,
+                "separate_url": separate_url,
+                "combined_url": combined_url,
+                "recommended_url": combined_url if report_type == "combined" else separate_url
+            }
             
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error generating PDF: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error generating report URLs: {str(e)}")
     
     def get_report_type(self, db: Session, ticket_id: str) -> str:
         """

@@ -10,6 +10,9 @@ import crud, models, schemas
 from database import SessionLocal_scale
 from database_pp import SessionLocal_pp
 from report_service import ReportService
+import requests
+
+
 
 #models.Base.metadata.create_all(bind=engine) # บรรทัดนี้อาจจะไม่จำเป็นถ้าตารางมีอยู่แล้ว
 
@@ -196,6 +199,49 @@ def get_report_type(ticket_id: str, db: Session = Depends(get_db_scale)):
     report_service = ReportService()
     report_type = report_service.get_report_type(db, ticket_id=ticket_id)
     return {"ticket_id": ticket_id, "report_type": report_type}
+
+@app.get("/api/reports/{ticket_id}/download/{report_type}")
+def download_report(ticket_id: str, report_type: str):
+    """
+    Proxy Endpoint สำหรับดึงรายงานเพื่อแก้ปัญหา CORS
+    """
+    try:
+        # ทำความสะอาด ticket_id (ลบช่องว่าง)
+        clean_ticket_id = ticket_id.strip()
+        
+        # สร้าง URL ของรายงาน
+        report_url = f"https://reports.zubbsteel.com/zticket_{report_type}.php?id={clean_ticket_id}"
+        
+        print(f"Proxy: Downloading from {report_url}")
+        
+        # ดึงรายงานจาก URL ภายนอก
+        response = requests.get(report_url, stream=True, timeout=30)
+        response.raise_for_status()
+        
+        print(f"Proxy: Successfully downloaded {len(response.content)} bytes")
+        
+        # ส่งกลับเป็น StreamingResponse
+        return StreamingResponse(
+            response.iter_content(chunk_size=8192),
+            media_type=response.headers.get('content-type', 'application/pdf'),
+            headers={
+                'Content-Disposition': f'attachment; filename="report_{clean_ticket_id}_{report_type}.pdf"',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET',
+                'Access-Control-Allow-Headers': '*'
+            }
+        )
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Proxy: Request error - {e}")
+        raise HTTPException(status_code=500, detail=f"ไม่สามารถดึงรายงานได้: {str(e)}")
+    except Exception as e:
+        print(f"Proxy: General error - {e}")
+        raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาด: {str(e)}")
+
+
+
+
 
 @app.options("/{full_path:path}")
 async def options_handler(full_path: str):

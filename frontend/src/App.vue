@@ -41,7 +41,7 @@ const isCancellingTicket = ref(false)
 const isPrintingReport = ref(false)
 
 // เพิ่ม state สำหรับการเลือกการดำเนินการ
-const printAction = ref('preview') // 'preview' หรือ 'print'
+const printAction = ref('preview') // 'preview', 'print', หรือ 'download'
 
 
 // --- Computed Property ---
@@ -256,7 +256,7 @@ function handleStartContinuousWeighing() {
     INITIAL_WEIGHT_IN: previousTicket.WE_WEIGHTOUT 
   };
   
-  // Log ที่ 4: ดูข้อมูลที่จะส่งต่อไปให้ Modal
+  // Log ที่ 4: ดูข้อมูลที่จะถูกส่งต่อไปให้ Modal
   console.log("4. ข้อมูลที่จะถูกส่งต่อไปให้ Modal (continuousWeighingData):", dataToPass);
   continuousWeighingData.value = {
     CARLICENSE: previousTicket.WE_LICENSE,
@@ -426,53 +426,210 @@ async function handlePrintReport() {
     
     // ตรวจสอบประเภทการชั่งจากรายการสินค้า
     const hasItems = ticketDetail.items && ticketDetail.items.length > 0;
-    const reportType = hasItems ? 'combined' : 'separate';
+    const reportType = hasItems ? 'a4' : 'a5'; // ชั่งรวมใช้ A4, ชั่งแยกใช้ A5
     
     console.log(`Items found: ${hasItems ? 'Yes' : 'No'}, Items count: ${ticketDetail.items ? ticketDetail.items.length : 0}`);
     
-    // สร้าง URL ตามประเภทการชั่ง
-    let reportUrl;
-    if (reportType === 'combined') {
-      // ชั่งรวม - ใช้ A4
-      reportUrl = `https://reports.zubbsteel.com/zticket_a4.php?id=${selectedTicketId.value}`;
-    } else {
-      // ชั่งแยก - ใช้ A5
-      reportUrl = `https://reports.zubbsteel.com/zticket_a5.php?id=${selectedTicketId.value}`;
-    }
-
-    console.log(`Opening report: ${reportType} (${hasItems ? 'ชั่งรวม' : 'ชั่งแยก'}) - ${reportUrl}`);
-
     if (printAction.value === 'preview') {
       // Preview - เปิดในแท็บใหม่
+      const reportUrl = `https://reports.zubbsteel.com/zticket_${reportType}.php?id=${selectedTicketId.value}`;
       window.open(reportUrl, '_blank');
-      // ปิดการแสดงแจ้งเตือน
-    } else {
-      // สั่งพิมพ์ - ใช้ iframe เพื่อสั่งพิมพ์
-      const printFrame = document.createElement('iframe');
-      printFrame.style.display = 'none';
-      printFrame.src = reportUrl;
-      
-      printFrame.onload = function() {
-        try {
-          printFrame.contentWindow.print();
-          setTimeout(() => {
-            document.body.removeChild(printFrame);
-          }, 1000);
-        } catch (error) {
-          console.error('Print error:', error);
-          alert('ไม่สามารถสั่งพิมพ์ได้ กรุณาลองใหม่');
-        }
-      };
-      
-      document.body.appendChild(printFrame);
-      alert(`กำลังสั่งพิมพ์รายงาน${reportType === 'combined' ? 'ชั่งรวม' : 'ชั่งแยก'}...`);
+    } else if (printAction.value === 'print') {
+      // สั่งพิมพ์ - Download ที่ Client และสั่งพิมพ์
+      await printReportFromClient(selectedTicketId.value, reportType, hasItems);
+    } else if (printAction.value === 'download') {
+      // ดาวน์โหลด - Download ไฟล์ไปยังโฟลเดอร์ Downloads
+      await downloadReportToClient(selectedTicketId.value, reportType, hasItems);
     }
     
   } catch (error) {
     console.error('Failed to handle report:', error);
-    alert('เกิดข้อผิดพลาดในการดำเนินการรายงาน');
+    alert(`เกิดข้อผิดพลาดในการดำเนินการรายงาน: ${error.message}`);
   } finally {
     isPrintingReport.value = false;
+  }
+}
+
+// ฟังก์ชันใหม่สำหรับ Download และสั่งพิมพ์ที่ Client
+async function printReportFromClient(ticketId, reportType, hasItems) {
+  try {
+    // ทำความสะอาด ticketId (ลบช่องว่าง)
+    const cleanTicketId = ticketId.trim();
+    
+    console.log(`Starting print process for ticket: ${cleanTicketId}, type: ${reportType}`);
+    
+    // วิธีที่ 1: ลองใช้ Client-side Printing (แนะนำ)
+    console.log('Trying method 1: Client-side printing...');
+    const clientSuccess = await printViaClient(cleanTicketId, reportType, hasItems);
+    
+    if (clientSuccess) {
+      console.log('Client-side print successful!');
+      return;
+    }
+    
+    // วิธีที่ 2: ลองใช้ Backend Print Service (fallback)
+    console.log('Client-side print failed, trying backend...');
+    const backendSuccess = await printViaBackend(cleanTicketId, reportType, hasItems);
+    
+    if (backendSuccess) {
+      console.log('Backend print successful!');
+      return;
+    }
+    
+    // วิธีที่ 3: Auto Download (fallback สุดท้าย)
+    console.log('Backend print failed, trying auto download...');
+    
+    // ใช้ proxy endpoint แทนการเรียก URL โดยตรง
+    const proxyUrl = `${API_BASE_URL}/api/reports/${cleanTicketId}/download/${reportType}`;
+    
+    console.log(`Downloading report via proxy: ${proxyUrl}`);
+    
+    // Download ไฟล์ผ่าน proxy
+    const response = await fetch(proxyUrl);
+    if (!response.ok) {
+      throw new Error(`ไม่สามารถดาวน์โหลดรายงานได้: ${response.status}`);
+    }
+    
+    // แปลงเป็น blob
+    const blob = await response.blob();
+    
+    // ตรวจสอบขนาดไฟล์
+    console.log(`Downloaded file size: ${blob.size} bytes`);
+    if (blob.size === 0) {
+      throw new Error('ไฟล์ที่ดาวน์โหลดมีขนาด 0 bytes');
+    }
+    
+    // สร้าง URL สำหรับ blob
+    const blobUrl = URL.createObjectURL(blob);
+    
+    // สร้างชื่อไฟล์
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `report_${cleanTicketId}_${reportType}_${timestamp}.pdf`;
+    
+    console.log(`File downloaded successfully: ${filename}`);
+    
+    // ใช้ Auto Download
+    console.log('Using auto download method...');
+    const autoDownloadSuccess = await printViaAutoDownload(blob, filename);
+    
+    if (autoDownloadSuccess) {
+      // ลบ blob URL
+      setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+        console.log('Blob URL cleaned up');
+      }, 10000);
+      return;
+    }
+    
+    // Fallback: ลองวิธีอื่นๆ
+    console.log('Auto download failed, trying other methods...');
+    
+    // วิธีที่ 4: ลองสั่งพิมพ์แบบ Silent
+    console.log('Trying method 4: Silent print...');
+    const silentPrintSuccess = await trySilentPrint(blobUrl, filename);
+    
+    if (silentPrintSuccess) {
+      alert(`กำลังสั่งพิมพ์รายงาน${hasItems ? 'ชั่งรวม' : 'ชั่งแยก'}...`);
+      setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+        console.log('Blob URL cleaned up');
+      }, 5000);
+      return;
+    }
+    
+    // วิธีที่ 5: ลองใช้ browser print API
+    console.log('Trying method 5: Browser print API...');
+    const browserAPISuccess = await printViaBrowserAPI(blob, filename);
+    
+    if (browserAPISuccess) {
+      alert(`กำลังสั่งพิมพ์รายงาน${hasItems ? 'ชั่งรวม' : 'ชั่งแยก'}...`);
+      setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+        console.log('Blob URL cleaned up');
+      }, 5000);
+      return;
+    }
+    
+    // วิธีที่ 6: ดาวน์โหลดไฟล์ธรรมดา
+    console.log('Trying method 6: Normal download...');
+    const downloadSuccess = await printViaDownload(blob, filename);
+    
+    if (downloadSuccess) {
+      setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+      }, 10000);
+      return;
+    }
+    
+    // วิธีที่ 7: เปิดในแท็บใหม่ (fallback สุดท้าย)
+    console.log('Trying method 7: Open in new tab...');
+    window.open(blobUrl, '_blank');
+    alert('ไม่สามารถสั่งพิมพ์ได้ กรุณาพิมพ์จากหน้าต่างที่เปิดขึ้นมา');
+    
+    setTimeout(() => {
+      URL.revokeObjectURL(blobUrl);
+    }, 10000);
+    
+  } catch (error) {
+    console.error('Download error:', error);
+    throw new Error(`ไม่สามารถดาวน์โหลดรายงานได้: ${error.message}`);
+  }
+}
+
+// ฟังก์ชันสำหรับ Download ไฟล์ไปยังโฟลเดอร์ Downloads
+async function downloadReportToClient(ticketId, reportType, hasItems) {
+  try {
+    // ทำความสะอาด ticketId (ลบช่องว่าง)
+    const cleanTicketId = ticketId.trim();
+    
+    // ใช้ proxy endpoint แทนการเรียก URL โดยตรง
+    const proxyUrl = `${API_BASE_URL}/api/reports/${cleanTicketId}/download/${reportType}`;
+    
+    console.log(`Downloading report via proxy: ${proxyUrl}`);
+    
+    // Download ไฟล์ผ่าน proxy
+    const response = await fetch(proxyUrl);
+    if (!response.ok) {
+      throw new Error(`ไม่สามารถดาวน์โหลดรายงานได้: ${response.status}`);
+    }
+    
+    // แปลงเป็น blob
+    const blob = await response.blob();
+    
+    // ตรวจสอบขนาดไฟล์
+    console.log(`Downloaded file size: ${blob.size} bytes`);
+    if (blob.size === 0) {
+      throw new Error('ไฟล์ที่ดาวน์โหลดมีขนาด 0 bytes');
+    }
+    
+    // สร้างชื่อไฟล์
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `report_${cleanTicketId}_${reportType}_${timestamp}.pdf`;
+    
+    console.log(`File downloaded successfully: ${filename}`);
+    
+    // สร้าง link สำหรับ download
+    const downloadLink = document.createElement('a');
+    downloadLink.href = URL.createObjectURL(blob);
+    downloadLink.download = filename;
+    downloadLink.style.display = 'none';
+    
+    // เพิ่ม link เข้าไปใน DOM และคลิก
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    
+    // ลบ link และ blob URL
+    setTimeout(() => {
+      document.body.removeChild(downloadLink);
+      URL.revokeObjectURL(downloadLink.href);
+      console.log('Download link cleaned up');
+    }, 1000);
+    
+    alert(`ดาวน์โหลดรายงาน${hasItems ? 'ชั่งรวม' : 'ชั่งแยก'} สำเร็จ: ${filename}`);
+    
+  } catch (error) {
+    console.error('Download error:', error);
+    throw new Error(`ไม่สามารถดาวน์โหลดรายงานได้: ${error.message}`);
   }
 }
 async function handleTicketUpdate(eventData) {
@@ -571,6 +728,559 @@ onMounted(async () => {
   await fetchCompletedTickets(selectedDate.value);
   connectWebSocket();
 });
+
+// ฟังก์ชันใหม่สำหรับสั่งพิมพ์ผ่านการดาวน์โหลดไฟล์
+async function printViaDownload(blob, filename) {
+  return new Promise((resolve) => {
+    try {
+      console.log('Attempting print via download...');
+      
+      // สร้าง link สำหรับ download
+      const downloadLink = document.createElement('a');
+      downloadLink.href = URL.createObjectURL(blob);
+      downloadLink.download = filename;
+      downloadLink.style.display = 'none';
+      
+      // เพิ่ม link เข้าไปใน DOM และคลิก
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      
+      // ลบ link และ blob URL
+      setTimeout(() => {
+        document.body.removeChild(downloadLink);
+        URL.revokeObjectURL(downloadLink.href);
+        console.log('Download link cleaned up');
+      }, 1000);
+      
+      // แสดงข้อความให้ผู้ใช้ทราบ
+      alert(`ไฟล์ ${filename} ถูกดาวน์โหลดแล้ว กรุณาเปิดไฟล์และสั่งพิมพ์จากโปรแกรม PDF viewer`);
+      
+      resolve(true);
+      
+    } catch (error) {
+      console.error('Download print error:', error);
+      resolve(false);
+    }
+  });
+}
+
+// ฟังก์ชันสำหรับลองสั่งพิมพ์แบบ Silent
+async function trySilentPrint(blobUrl, filename) {
+  return new Promise((resolve) => {
+    try {
+      console.log('Attempting silent print...');
+      
+      // วิธีที่ 1: ลองใช้ window.open แล้วสั่งพิมพ์
+      const printWindow = window.open(blobUrl, '_blank', 'width=800,height=600,scrollbars=yes,resizable=yes');
+      
+      if (printWindow) {
+        let printAttempted = false;
+        
+        // รอให้หน้าต่างโหลดเสร็จ
+        printWindow.onload = function() {
+          if (printAttempted) return;
+          printAttempted = true;
+          
+          try {
+            console.log('Print window loaded, waiting for PDF to load...');
+            
+            // รอให้ PDF โหลดเสร็จ
+            setTimeout(() => {
+              try {
+                // ลองสั่งพิมพ์หลายวิธี
+                if (printWindow.print) {
+                  printWindow.print();
+                  console.log('Print command sent successfully via window.open.print()');
+                } else if (printWindow.document && printWindow.document.defaultView && printWindow.document.defaultView.print) {
+                  printWindow.document.defaultView.print();
+                  console.log('Print command sent via document.defaultView.print()');
+                } else {
+                  console.warn('No print method found in window');
+                  resolve(false);
+                  return;
+                }
+                
+                resolve(true);
+                
+                // ปิดหน้าต่างหลังจากสั่งพิมพ์
+                setTimeout(() => {
+                  if (!printWindow.closed) {
+                    printWindow.close();
+                    console.log('Print window closed');
+                  }
+                }, 5000);
+                
+              } catch (printError) {
+                console.error('Print error via window.open:', printError);
+                if (!printWindow.closed) {
+                  printWindow.close();
+                }
+                resolve(false);
+              }
+            }, 3000); // รอ 3 วินาทีให้ PDF โหลดเสร็จ
+            
+          } catch (error) {
+            console.error('Window load error:', error);
+            if (!printWindow.closed) {
+              printWindow.close();
+            }
+            resolve(false);
+          }
+        };
+        
+        // ตั้ง timeout สำหรับการโหลด
+        setTimeout(() => {
+          if (!printAttempted) {
+            console.warn('Print window load timeout, attempting print anyway...');
+            printAttempted = true;
+            
+            try {
+              // ลองสั่งพิมพ์แม้จะ timeout
+              if (printWindow.print) {
+                printWindow.print();
+                console.log('Print command sent after timeout');
+                resolve(true);
+              } else {
+                console.warn('No print method available after timeout');
+                resolve(false);
+              }
+              
+              setTimeout(() => {
+                if (!printWindow.closed) {
+                  printWindow.close();
+                }
+              }, 5000);
+              
+            } catch (error) {
+              console.error('Print error after timeout:', error);
+              if (!printWindow.closed) {
+                printWindow.close();
+              }
+              resolve(false);
+            }
+          }
+        }, 8000); // timeout 8 วินาที
+        
+      } else {
+        // ถ้าไม่สามารถเปิดหน้าต่างใหม่ได้ (popup blocker)
+        console.warn('Cannot open print window (popup blocker), trying iframe method...');
+        
+        // วิธีที่ 2: ใช้ iframe (fallback)
+        const printFrame = document.createElement('iframe');
+        printFrame.style.display = 'none';
+        printFrame.style.width = '100%';
+        printFrame.style.height = '100%';
+        printFrame.src = blobUrl;
+        
+        // เพิ่ม iframe เข้าไปใน DOM
+        document.body.appendChild(printFrame);
+        
+        let printAttempted = false;
+        
+        // รอให้ iframe โหลดเสร็จแล้วสั่งพิมพ์
+        printFrame.onload = function() {
+          if (printAttempted) return;
+          printAttempted = true;
+          
+          try {
+            console.log('Print frame loaded, waiting for PDF to load...');
+            
+            // รอสักครู่ให้ไฟล์โหลดเสร็จสมบูรณ์
+            setTimeout(() => {
+              try {
+                // ลองสั่งพิมพ์หลายวิธี
+                if (printFrame.contentWindow && printFrame.contentWindow.print) {
+                  printFrame.contentWindow.print();
+                  console.log('Print command sent successfully via iframe.contentWindow.print()');
+                } else if (printFrame.contentWindow && printFrame.contentWindow.document && printFrame.contentWindow.document.defaultView && printFrame.contentWindow.document.defaultView.print) {
+                  printFrame.contentWindow.document.defaultView.print();
+                  console.log('Print command sent via iframe document.defaultView.print()');
+                } else {
+                  console.warn('No print method found in iframe');
+                  resolve(false);
+                  return;
+                }
+                
+                resolve(true);
+                
+                // ลบ iframe หลังจากสั่งพิมพ์
+                setTimeout(() => {
+                  if (printFrame.parentNode) {
+                    document.body.removeChild(printFrame);
+                    console.log('Print frame removed');
+                  }
+                }, 5000);
+                
+              } catch (printError) {
+                console.error('Print error via iframe:', printError);
+                resolve(false);
+                
+                // ลบ iframe
+                if (printFrame.parentNode) {
+                  document.body.removeChild(printFrame);
+                }
+              }
+            }, 2000); // รอ 2 วินาที
+            
+          } catch (error) {
+            console.error('Frame load error:', error);
+            resolve(false);
+            
+            // ลบ iframe
+            if (printFrame.parentNode) {
+              document.body.removeChild(printFrame);
+            }
+          }
+        };
+        
+        // ตั้ง timeout สำหรับการโหลด
+        setTimeout(() => {
+          if (!printAttempted) {
+            console.warn('Print frame load timeout');
+            printAttempted = true;
+            resolve(false);
+            
+            // ลบ iframe
+            if (printFrame.parentNode) {
+              document.body.removeChild(printFrame);
+            }
+          }
+        }, 10000); // timeout 10 วินาที
+      }
+      
+    } catch (error) {
+      console.error('Silent print setup error:', error);
+      resolve(false);
+    }
+  });
+}
+
+// ฟังก์ชันใหม่สำหรับสั่งพิมพ์ผ่าน browser print API
+async function printViaBrowserAPI(blob, filename) {
+  return new Promise((resolve) => {
+    try {
+      console.log('Attempting print via browser print API...');
+      
+      // สร้าง URL สำหรับ blob
+      const blobUrl = URL.createObjectURL(blob);
+      
+      // สร้าง iframe สำหรับแสดง PDF
+      const printFrame = document.createElement('iframe');
+      printFrame.style.display = 'none';
+      printFrame.style.width = '100%';
+      printFrame.style.height = '100%';
+      printFrame.src = blobUrl;
+      
+      // เพิ่ม iframe เข้าไปใน DOM
+      document.body.appendChild(printFrame);
+      
+      let printAttempted = false;
+      
+      // รอให้ iframe โหลดเสร็จ
+      printFrame.onload = function() {
+        if (printAttempted) return;
+        printAttempted = true;
+        
+        try {
+          console.log('Print frame loaded for browser API, attempting print...');
+          
+          // รอให้ PDF โหลดเสร็จ
+          setTimeout(() => {
+            try {
+              // ใช้ browser print API
+              if (window.print) {
+                window.print();
+                console.log('Print command sent via browser print API');
+                resolve(true);
+              } else {
+                console.warn('Browser print API not available');
+                resolve(false);
+              }
+              
+              // ลบ iframe และ blob URL
+              setTimeout(() => {
+                if (printFrame.parentNode) {
+                  document.body.removeChild(printFrame);
+                }
+                URL.revokeObjectURL(blobUrl);
+                console.log('Print frame and blob URL cleaned up');
+              }, 3000);
+              
+            } catch (printError) {
+              console.error('Print error via browser API:', printError);
+              resolve(false);
+              
+              // ลบ iframe และ blob URL
+              if (printFrame.parentNode) {
+                document.body.removeChild(printFrame);
+              }
+              URL.revokeObjectURL(blobUrl);
+            }
+          }, 2000);
+          
+        } catch (error) {
+          console.error('Frame load error for browser API:', error);
+          resolve(false);
+          
+          // ลบ iframe และ blob URL
+          if (printFrame.parentNode) {
+            document.body.removeChild(printFrame);
+          }
+          URL.revokeObjectURL(blobUrl);
+        }
+      };
+      
+      // ตั้ง timeout
+      setTimeout(() => {
+        if (!printAttempted) {
+          console.warn('Browser API print timeout');
+          printAttempted = true;
+          resolve(false);
+          
+          // ลบ iframe และ blob URL
+          if (printFrame.parentNode) {
+            document.body.removeChild(printFrame);
+          }
+          URL.revokeObjectURL(blobUrl);
+        }
+      }, 8000);
+      
+    } catch (error) {
+      console.error('Browser API print setup error:', error);
+      resolve(false);
+    }
+  });
+}
+
+// ฟังก์ชันใหม่สำหรับสั่งพิมพ์ผ่านการดาวน์โหลดและเปิดไฟล์อัตโนมัติ
+async function printViaAutoDownload(blob, filename) {
+  return new Promise((resolve) => {
+    try {
+      console.log('Attempting print via auto download...');
+      
+      // สร้าง link สำหรับ download
+      const downloadLink = document.createElement('a');
+      downloadLink.href = URL.createObjectURL(blob);
+      downloadLink.download = filename;
+      downloadLink.style.display = 'none';
+      
+      // เพิ่ม link เข้าไปใน DOM และคลิก
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      
+      // ลบ link และ blob URL
+      setTimeout(() => {
+        document.body.removeChild(downloadLink);
+        URL.revokeObjectURL(downloadLink.href);
+        console.log('Download link cleaned up');
+      }, 1000);
+      
+      // แสดงข้อความให้ผู้ใช้ทราบ
+      alert(`ไฟล์ ${filename} ถูกดาวน์โหลดแล้ว\n\nระบบจะพยายามเปิดไฟล์และสั่งพิมพ์อัตโนมัติ\n\nหากไม่มีการสั่งพิมพ์ กรุณา:\n1. เปิดไฟล์จากโฟลเดอร์ Downloads\n2. กด Ctrl+P เพื่อสั่งพิมพ์\n3. เลือกเครื่องพิมพ์ที่ต้องการ`);
+      
+      // ลองเปิดไฟล์อัตโนมัติด้วยวิธีต่างๆ
+      setTimeout(() => {
+        try {
+          // วิธีที่ 1: ลองเปิดด้วย blob URL
+          console.log('Trying to open file with blob URL...');
+          window.open(downloadLink.href, '_blank');
+        } catch (error) {
+          console.log('Cannot open with blob URL, trying other methods...');
+          
+          // วิธีที่ 2: ลองเปิดด้วย iframe
+          try {
+            const iframe = document.createElement('iframe');
+            iframe.src = downloadLink.href;
+            iframe.style.display = 'none';
+            document.body.appendChild(iframe);
+            
+            setTimeout(() => {
+              document.body.removeChild(iframe);
+            }, 5000);
+          } catch (error2) {
+            console.log('Cannot open with iframe either');
+          }
+        }
+      }, 2000);
+      
+      resolve(true);
+      
+    } catch (error) {
+      console.error('Auto download print error:', error);
+      resolve(false);
+    }
+  });
+}
+
+// ฟังก์ชันใหม่สำหรับสั่งพิมพ์ผ่าน iframe และ window.print()
+async function printViaIframe(blob, filename) {
+  return new Promise((resolve) => {
+    try {
+      console.log('Attempting print via iframe...');
+      
+      // สร้าง iframe
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.style.position = 'fixed';
+      iframe.style.top = '-9999px';
+      iframe.style.left = '-9999px';
+      
+      // เพิ่ม iframe เข้าไปใน DOM
+      document.body.appendChild(iframe);
+      
+      // สร้าง blob URL
+      const blobUrl = URL.createObjectURL(blob);
+      
+      // รอให้ iframe โหลดเสร็จแล้วสั่งพิมพ์
+      iframe.onload = () => {
+        try {
+          console.log('Iframe loaded, attempting to print...');
+          
+          // รอสักครู่ให้ PDF โหลดเสร็จ
+          setTimeout(() => {
+            try {
+              // ลองสั่งพิมพ์
+              iframe.contentWindow.print();
+              console.log('Print command sent via iframe');
+              
+              // ลบ iframe และ blob URL หลังจากสั่งพิมพ์
+              setTimeout(() => {
+                document.body.removeChild(iframe);
+                URL.revokeObjectURL(blobUrl);
+                console.log('Iframe and blob URL cleaned up');
+              }, 10000);
+              
+              resolve(true);
+            } catch (printError) {
+              console.error('Print error:', printError);
+              document.body.removeChild(iframe);
+              URL.revokeObjectURL(blobUrl);
+              resolve(false);
+            }
+          }, 2000);
+          
+        } catch (error) {
+          console.error('Iframe print error:', error);
+          document.body.removeChild(iframe);
+          URL.revokeObjectURL(blobUrl);
+          resolve(false);
+        }
+      };
+      
+      // ตั้งค่า src ของ iframe
+      iframe.src = blobUrl;
+      
+      // Timeout ถ้า iframe ไม่โหลด
+      setTimeout(() => {
+        if (document.body.contains(iframe)) {
+          document.body.removeChild(iframe);
+          URL.revokeObjectURL(blobUrl);
+          console.log('Iframe timeout, removing...');
+          resolve(false);
+        }
+      }, 15000);
+      
+    } catch (error) {
+      console.error('Iframe creation error:', error);
+      resolve(false);
+    }
+  });
+}
+
+// ฟังก์ชันใหม่สำหรับสั่งพิมพ์ผ่าน Client-side
+async function printViaClient(ticketId, reportType, hasItems) {
+  try {
+    console.log('Attempting print via client...');
+    
+    // ดาวน์โหลดไฟล์ผ่าน proxy
+    const proxyUrl = `${API_BASE_URL}/api/reports/${ticketId}/download/${reportType}`;
+    console.log(`Downloading from: ${proxyUrl}`);
+    
+    const response = await fetch(proxyUrl);
+    if (!response.ok) {
+      throw new Error(`ไม่สามารถดาวน์โหลดได้: ${response.status}`);
+    }
+    
+    const blob = await response.blob();
+    console.log(`Downloaded file size: ${blob.size} bytes`);
+    
+    if (blob.size === 0) {
+      throw new Error('ไฟล์ที่ดาวน์โหลดมีขนาด 0 bytes');
+    }
+    
+    // สร้าง URL สำหรับ blob
+    const blobUrl = URL.createObjectURL(blob);
+    
+    // สร้างชื่อไฟล์
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `report_${ticketId}_${reportType}_${timestamp}.pdf`;
+    
+    // วิธีที่ 1: ลองใช้ iframe printing (แนะนำ)
+    console.log('Trying iframe printing...');
+    const iframeSuccess = await printViaIframe(blob, filename);
+    
+    if (iframeSuccess) {
+      alert(`สั่งพิมพ์รายงาน${hasItems ? 'ชั่งรวม' : 'ชั่งแยก'} สำเร็จ!\n\nTicket ID: ${ticketId}\nReport Type: ${reportType}`);
+      
+      // ลบ blob URL
+      setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+        console.log('Blob URL cleaned up');
+      }, 10000);
+      
+      return true;
+    }
+    
+    // วิธีที่ 2: ใช้ Auto Download (fallback)
+    console.log('Iframe printing failed, trying auto download...');
+    const success = await printViaAutoDownload(blob, filename);
+    
+    if (success) {
+      alert(`สั่งพิมพ์รายงาน${hasItems ? 'ชั่งรวม' : 'ชั่งแยก'} สำเร็จ!\n\nTicket ID: ${ticketId}\nReport Type: ${reportType}`);
+      
+      // ลบ blob URL
+      setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+        console.log('Blob URL cleaned up');
+      }, 10000);
+      
+      return true;
+    } else {
+      throw new Error('ไม่สามารถสั่งพิมพ์ได้');
+    }
+    
+  } catch (error) {
+    console.error('Client print error:', error);
+    alert(`ไม่สามารถสั่งพิมพ์ได้: ${error.message}`);
+    return false;
+  }
+}
+
+// ฟังก์ชันใหม่สำหรับสั่งพิมพ์ผ่าน Backend Print Service (fallback)
+async function printViaBackend(ticketId, reportType, hasItems) {
+  try {
+    console.log('Attempting print via backend...');
+    
+    const response = await fetch(`${API_BASE_URL}/api/print/${ticketId}/${reportType}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    if (response.ok) {
+      const result = await response.json();
+      alert(`สั่งพิมพ์รายงาน${hasItems ? 'ชั่งรวม' : 'ชั่งแยก'} สำเร็จ!\n\nTicket ID: ${result.ticket_id}\nReport Type: ${result.report_type}`);
+      return true;
+    } else {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || `ไม่สามารถสั่งพิมพ์ได้: ${response.status}`);
+    }
+    
+  } catch (error) {
+    console.error('Backend print error:', error);
+    alert(`ไม่สามารถสั่งพิมพ์ได้: ${error.message}`);
+    return false;
+  }
+}
 </script>
 
 <template>
@@ -696,6 +1406,19 @@ onMounted(async () => {
                     <span class="option-text">พิมพ์</span>
                   </div>
                 </label>
+                
+                <label class="print-option" :class="{ 'selected': printAction === 'download' }">
+                  <input 
+                    type="radio" 
+                    v-model="printAction" 
+                    value="download" 
+                    name="printAction"
+                  >
+                  <div class="option-content">
+                    <span class="option-icon">💾</span>
+                    <span class="option-text">ดาวน์โหลด</span>
+                  </div>
+                </label>
               </div>
               
               <!-- ปุ่มดำเนินการ -->
@@ -705,9 +1428,9 @@ onMounted(async () => {
                 :disabled="isPrintingReport || !printAction"
               >
                 <span class="button-icon">
-                  {{ isPrintingReport ? '⏳' : (printAction === 'preview' ? '👁️' : '🖨️') }}
+                  {{ isPrintingReport ? '⏳' : (printAction === 'preview' ? '👁️' : printAction === 'print' ? '🖨️' : '💾') }}
                 </span>
-                {{ isPrintingReport ? 'กำลังดำเนินการ...' : (printAction === 'preview' ? 'ดูตัวอย่าง' : 'สั่งพิมพ์') }}
+                {{ isPrintingReport ? 'กำลังดำเนินการ...' : (printAction === 'preview' ? 'ดูตัวอย่าง' : printAction === 'print' ? 'สั่งพิมพ์' : 'ดาวน์โหลด') }}
               </button>
             </div>
 
@@ -1460,16 +2183,18 @@ th {
 
 .print-options {
   display: flex;
-  gap: 0.4rem;
+  gap: 0.3rem;
   width: 100%;
+  flex-wrap: wrap;
 }
 
 .print-option {
   flex: 1;
+  min-width: 80px;
   display: flex;
   align-items: center;
   cursor: pointer;
-  padding: 0.5rem;
+  padding: 0.4rem;
   border-radius: 6px;
   background: white;
   border: 1px solid var(--border-color);
