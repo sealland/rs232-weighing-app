@@ -47,6 +47,9 @@ class WeightTicketCreate(BaseModel):
     WE_WEIGHTOUT_ORI: Optional[float] = None  # น้ำหนักออกต้นฉบับ
     WE_WEIGHTTOT: Optional[float] = None  # น้ำหนักก่อนหัก (บันทึกตอนชั่งออก)
     
+    # --- เพิ่มฟิลด์สำหรับ branch prefix ---
+    branch_prefix: Optional[str] = None  # Prefix ของสาขา (Z1, Z2, Z3, etc.)
+    
 class WeightTicketUpdateWeighOut(BaseModel):
     WE_WEIGHTOUT: float
 

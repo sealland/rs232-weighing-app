@@ -49,8 +49,10 @@ def create_ticket(db: Session, ticket: schemas.WeightTicketCreate):
     """
     สร้างบัตรชั่งใหม่ในฐานข้อมูล และอัปเดตบัตรแม่หากเป็นการชั่งต่อเนื่อง
     """
-    # 1. สร้าง WE_ID (Logic เดิมของคุณทั้งหมด)
-    prefix = "Z1"
+    # 1. สร้าง WE_ID (ปรับปรุงให้ใช้ branch_prefix จาก client)
+    # ใช้ branch_prefix จาก ticket ถ้ามี ถ้าไม่มีให้ใช้ Z1 เป็น default
+    prefix = getattr(ticket, 'branch_prefix', 'Z1') or 'Z1'
+    
     today = datetime.now()
     buddhist_year_last_digit = str(today.year + 543)[-1] 
     date_format = f"{buddhist_year_last_digit}{today.strftime('%m%d')}"
