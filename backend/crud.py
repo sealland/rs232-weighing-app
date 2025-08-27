@@ -83,7 +83,14 @@ def create_ticket(db: Session, ticket: schemas.WeightTicketCreate):
         WE_MAT_CD=ticket.WE_MAT_CD,
         WE_MAT=ticket.WE_MAT,
         # --- เพิ่มการบันทึกเลขคิว ---
-        WE_SEQ=ticket.WE_SEQ  # บันทึกเลขคิวจากข้อมูลที่ส่งมา
+        WE_SEQ=ticket.WE_SEQ,  # บันทึกเลขคิวจากข้อมูลที่ส่งมา
+        # --- เพิ่มการบันทึกข้อมูลคนขับและประเภทรถ ---
+        WE_DRIVER=ticket.WE_DRIVER,        # บันทึกชื่อคนขับ
+        WE_TRUCK_CHAR=ticket.WE_TRUCK_CHAR,  # บันทึกประเภทรถ
+        # --- เพิ่มการบันทึกน้ำหนักที่หักและน้ำหนักต้นฉบับ ---
+        WE_WEIGHTMINUS=ticket.WE_WEIGHTMINUS,  # บันทึกน้ำหนักที่หัก
+        WE_WEIGHTIN_ORI=ticket.WE_WEIGHTIN_ORI,  # บันทึกน้ำหนักเข้าต้นฉบับ
+        WE_WEIGHTOUT_ORI=ticket.WE_WEIGHTOUT_ORI  # บันทึกน้ำหนักออกต้นฉบับ
     )
     db.add(db_ticket)
     
@@ -151,10 +158,16 @@ def update_weigh_out(db: Session, ticket_id: str, weigh_out_data: schemas.Weight
     weight_out = weigh_out_data.WE_WEIGHTOUT
     
     db_ticket.WE_WEIGHTOUT = weight_out
+    db_ticket.WE_WEIGHTOUT_ORI = weight_out  # บันทึกน้ำหนักออกต้นฉบับ
     db_ticket.WE_TIMEOUT = datetime.now()
     
-    # 3. คำนวณน้ำหนักสุทธิและกำหนด WE_TYPE ตาม Logic
-    net_weight = abs(weight_in - weight_out)
+    # 3. คำนวณน้ำหนักก่อนหักและน้ำหนักสุทธิ
+    weight_before_deduction = abs(weight_in - weight_out)  # น้ำหนักก่อนหัก
+    db_ticket.WE_WEIGHTTOT = weight_before_deduction  # บันทึกน้ำหนักก่อนหัก
+    
+    # คำนวณน้ำหนักสุทธิ (น้ำหนักก่อนหัก - น้ำหนักที่หัก)
+    weight_deduction = db_ticket.WE_WEIGHTMINUS or 0
+    net_weight = weight_before_deduction - weight_deduction
     db_ticket.WE_WEIGHTNET = net_weight
     
     # Logic: ถ้า น้ำหนักออก > น้ำหนักเข้า, WE_TYPE = 'O' (Outgoing)
@@ -262,6 +275,7 @@ def add_items_to_ticket(db: Session, ticket_id: str, items: List[schemas.WeightT
 def get_available_car_queue(db: Session):
     """
     ดึงข้อมูลคิวรถของวันนี้ ที่ Ship_point = 'P8' และยังไม่มีการสร้างบัตรชั่ง (TICKET IS NULL)
+    พร้อมข้อมูลคนขับและประเภทรถ
     """
     try:
         from sqlalchemy import text
@@ -274,7 +288,7 @@ def get_available_car_queue(db: Session):
             print(f"ERROR: Database connection failed: {db_error}")
             return []
         
-        # ดึงข้อมูลคิวรถสำหรับวันนี้
+        # ดึงข้อมูลคิวรถสำหรับวันนี้ พร้อมข้อมูลคนขับและประเภทรถ
         try:
             car_queue = db.query(models.CarVisit).filter(
                 models.CarVisit.WADAT_IST == today,
@@ -289,6 +303,24 @@ def get_available_car_queue(db: Session):
         
     except Exception as e:
         print(f"ERROR in get_available_car_queue: {e}")
+        return []
+
+# --- เพิ่มฟังก์ชันใหม่สำหรับดึงข้อมูลคิวรถตามวันที่ที่ระบุ ---
+def get_car_queue_by_date(db: Session, target_date: date):
+    """
+    ดึงข้อมูลคิวรถตามวันที่ที่ระบุ ที่ Ship_point = 'P8' และยังไม่มีการสร้างบัตรชั่ง (TICKET IS NULL)
+    พร้อมข้อมูลคนขับและประเภทรถ
+    """
+    try:
+        car_queue = db.query(models.CarVisit).filter(
+            models.CarVisit.WADAT_IST == target_date,
+            models.CarVisit.Ship_point == 'P8'
+        ).order_by(models.CarVisit.SEQ).all()
+        
+        return car_queue
+        
+    except Exception as e:
+        print(f"ERROR in get_car_queue_by_date: {e}")
         return []
 # ------------------------------------
 

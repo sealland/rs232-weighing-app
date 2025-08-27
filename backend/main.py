@@ -14,6 +14,7 @@ import requests
 
 
 
+
 #models.Base.metadata.create_all(bind=engine) # บรรทัดนี้อาจจะไม่จำเป็นถ้าตารางมีอยู่แล้ว
 
 app = FastAPI()
@@ -140,13 +141,26 @@ def read_shipment_plan(plan_id: str, db: Session = Depends(get_db_pp)):
 @app.get("/api/car-queue/", response_model=List[schemas.CarVisit])
 def read_car_queue(db: Session = Depends(get_db_pp)):
     """
-    API Endpoint สำหรับดึงข้อมูลคิวรถ
+    API Endpoint สำหรับดึงข้อมูลคิวรถของวันนี้
     """
     try:
         car_queue = crud.get_available_car_queue(db)
         return car_queue
     except Exception as e:
         print(f"ERROR in /api/car-queue/ endpoint: {e}")
+        return []
+
+# --- เพิ่ม Endpoint ใหม่สำหรับดึงคิวรถตามวันที่ ---
+@app.get("/api/car-queue/{target_date}", response_model=List[schemas.CarVisit])
+def read_car_queue_by_date(target_date: date, db: Session = Depends(get_db_pp)):
+    """
+    API Endpoint สำหรับดึงข้อมูลคิวรถตามวันที่ที่ระบุ
+    """
+    try:
+        car_queue = crud.get_car_queue_by_date(db, target_date=target_date)
+        return car_queue
+    except Exception as e:
+        print(f"ERROR in /api/car-queue/{target_date} endpoint: {e}")
         return []
 # ---------------------------------------
 # --- เพิ่ม Endpoint ใหม่สำหรับ "แทนที่" รายการสินค้า ---

@@ -10,6 +10,9 @@ const emit = defineEmits(['close', 'weigh-out', 'ticket-updated', 'view-ticket']
 // --- State Management for Edit Mode ---
 const isEditing = ref(false);
 const editableData = ref({});
+// --- เพิ่ม State สำหรับน้ำหนักก่อนหักและน้ำหนักที่หัก ---
+const editableWeightBeforeDeduction = ref(0);
+const editableWeightDeduction = ref(0);
 
 // State for "แก้ไข/เพิ่มรายการสินค้า"
 const planIdToSearch = ref('');
@@ -59,12 +62,19 @@ function startEditing() {
   // 1. ตรวจสอบก่อนว่ามี ticket data จริงๆ
   if (!props.ticket) return;
 
-  // 2. Copy ข้อมูลหลัก
+  // 2. Copy ข้อมูลหลัก - เพิ่มข้อมูลคนขับและประเภทรถ
   editableData.value = {
     WE_LICENSE: props.ticket.WE_LICENSE,
     WE_VENDOR: props.ticket.WE_VENDOR,
     WE_QTY: props.ticket.WE_QTY,
+    // --- เพิ่มข้อมูลคนขับและประเภทรถ ---
+    WE_DRIVER: props.ticket.WE_DRIVER,
+    WE_TRUCK_CHAR: props.ticket.WE_TRUCK_CHAR,
   };
+  
+  // --- ตั้งค่าน้ำหนักก่อนหักและน้ำหนักที่หัก ---
+  editableWeightBeforeDeduction.value = props.ticket.WE_WEIGHTTOT || 0;
+  editableWeightDeduction.value = props.ticket.WE_WEIGHTMINUS || 0;
   
   // 3. Copy รายการสินค้า (ถ้ามี) ไปใส่ตะกร้า พร้อมสร้าง editable_qty
   if (props.ticket.items && Array.isArray(props.ticket.items)) {
@@ -113,7 +123,7 @@ function handleSaveChanges() {
   // 2. ตรวจสอบสถานะว่าเป็น "ชั่งรวม" หรือไม่
   const isNowCombined = newItemsToReplace.value.length > 0;
 
-  // 3. รวบรวมข้อมูลหลัก (mainData)
+  // 3. รวบรวมข้อมูลหลัก (mainData) - เพิ่มข้อมูลคนขับและประเภทรถ
   const mainDataPayload = {
     WE_LICENSE: editableData.value.WE_LICENSE,
     WE_VENDOR: editableData.value.WE_VENDOR,
@@ -121,7 +131,17 @@ function handleSaveChanges() {
     WE_DIREF: isNowCombined ? 'ชั่งรวม' : (props.ticket.items.length === 0 ? props.ticket.WE_DIREF : 'ชั่งแยก'),
     WE_MAT_CD: isNowCombined ? 'ชั่งรวม' : (props.ticket.items.length === 0 ? props.ticket.WE_MAT_CD : null),
     WE_MAT: isNowCombined ? 'ชั่งรวม' : (props.ticket.items.length === 0 ? props.ticket.WE_MAT : 'สินค้าชั่งแยก'),
+    // --- เพิ่มข้อมูลคนขับและประเภทรถ ---
+    WE_DRIVER: editableData.value.WE_DRIVER,
+    WE_TRUCK_CHAR: editableData.value.WE_TRUCK_CHAR,
+    // --- เพิ่มข้อมูลน้ำหนักก่อนหักและน้ำหนักที่หัก ---
+    WE_WEIGHTTOT: editableWeightBeforeDeduction.value,
+    WE_WEIGHTMINUS: editableWeightDeduction.value,
   };
+  
+  // 4. คำนวณและอัปเดตน้ำหนักสุทธิ
+  const netWeight = editableWeightBeforeDeduction.value - editableWeightDeduction.value;
+  mainDataPayload.WE_WEIGHTNET = netWeight;
 
   // 4. รวบรวมรายการสินค้าใหม่ (newItems)
   const newItemsPayload = isNowCombined
@@ -235,6 +255,58 @@ async function handleSearchPlan() {
     searchLoading.value = false;
   }
 }
+
+// --- เพิ่มฟังก์ชันสำหรับคำนวณน้ำหนัก ---
+function calculateWeightBeforeDeduction() {
+  if (!props.ticket) return '-';
+  
+  // ถ้ามีข้อมูล WE_WEIGHTTOT ในฐานข้อมูล ให้ใช้ข้อมูลนั้น
+  if (props.ticket.WE_WEIGHTTOT !== null && props.ticket.WE_WEIGHTTOT !== undefined) {
+    return props.ticket.WE_WEIGHTTOT.toLocaleString('en-US') + ' กก.';
+  }
+  
+  // ถ้าไม่มี ให้คำนวณจากน้ำหนักเข้า - น้ำหนักออก
+  const weightIn = props.ticket.WE_WEIGHTIN || 0;
+  const weightOut = props.ticket.WE_WEIGHTOUT || 0;
+  const weightBeforeDeduction = weightIn - weightOut;
+  
+  if (weightBeforeDeduction > 0) {
+    return weightBeforeDeduction.toLocaleString('en-US') + ' กก.';
+  } else {
+    return '-';
+  }
+}
+
+function calculateNetWeight() {
+  if (!props.ticket) return '-';
+  
+  // คำนวณน้ำหนักก่อนหัก
+  const weightIn = props.ticket.WE_WEIGHTIN || 0;
+  const weightOut = props.ticket.WE_WEIGHTOUT || 0;
+  const weightBeforeDeduction = weightIn - weightOut;
+  
+  // คำนวณน้ำหนักสุทธิ
+  const weightDeduction = props.ticket.WE_WEIGHTMINUS || 0;
+  const netWeight = weightBeforeDeduction - weightDeduction;
+  
+  if (netWeight > 0) {
+    return netWeight.toLocaleString('en-US') + ' กก.';
+  } else {
+    return '-';
+  }
+}
+
+function displayNetWeight() {
+  if (!props.ticket) return '-';
+  
+  // ถ้ามีข้อมูล WE_WEIGHTNET ในฐานข้อมูล ให้ใช้ข้อมูลนั้น
+  if (props.ticket.WE_WEIGHTNET !== null && props.ticket.WE_WEIGHTNET !== undefined && props.ticket.WE_WEIGHTNET > 0) {
+    return props.ticket.WE_WEIGHTNET.toLocaleString('en-US') + ' กก.';
+  }
+  
+  // ถ้าไม่มี ให้คำนวณจากน้ำหนักก่อนหัก - น้ำหนักที่หัก
+  return calculateNetWeight();
+}
 </script>
 
 <template>
@@ -255,6 +327,16 @@ async function handleSearchPlan() {
             <input v-if="isEditing" type="text" v-model="editableData.WE_LICENSE" class="edit-input">
             <span v-else>{{ ticket.WE_LICENSE }}</span>
           </div>
+          <div>
+            <strong>คนขับ:</strong>
+            <input v-if="isEditing" type="text" v-model="editableData.WE_DRIVER" class="edit-input" placeholder="ชื่อคนขับ">
+            <span v-else>{{ ticket.WE_DRIVER || 'ไม่ระบุ' }}</span>
+          </div>
+          <div>
+            <strong>ประเภทรถ:</strong>
+            <input v-if="isEditing" type="text" v-model="editableData.WE_TRUCK_CHAR" class="edit-input" placeholder="ประเภทรถ">
+            <span v-else>{{ ticket.WE_TRUCK_CHAR || 'ไม่ระบุ' }}</span>
+          </div>
           <div class="customer-info">
             <strong>ลูกค้า:</strong>
              <input v-if="isEditing" type="text" v-model="editableData.WE_VENDOR" class="edit-input">
@@ -262,6 +344,28 @@ async function handleSearchPlan() {
           </div>
           <div><strong>เวลาชั่งเข้า:</strong> {{ new Date(ticket.WE_TIMEIN).toLocaleString('th-TH') }}</div>
           <div><strong>เวลาชั่งออก:</strong> {{ ticket.WE_TIMEOUT ? new Date(ticket.WE_TIMEOUT).toLocaleString('th-TH') : '-' }}</div>
+          <div>
+            <strong>น้ำหนักก่อนหัก:</strong>
+            <input v-if="isEditing" type="number" v-model.number="editableWeightBeforeDeduction" step="0.01" min="0" class="edit-input">
+            <span v-else>{{ calculateWeightBeforeDeduction() }}</span>
+            <small v-if="!isEditing" class="field-description">น้ำหนักสุทธิก่อนทำการหักน้ำหนัก (น้ำหนักเข้า - น้ำหนักออก)</small>
+          </div>
+          <div>
+            <strong>น้ำหนักที่หัก:</strong>
+            <input v-if="isEditing" type="number" v-model.number="editableWeightDeduction" step="0.01" min="0" class="edit-input">
+            <span v-else>{{ ticket.WE_WEIGHTMINUS ? ticket.WE_WEIGHTMINUS.toLocaleString('en-US') + ' กก.' : '-' }}</span>
+            <small v-if="!isEditing" class="field-description">น้ำหนักที่หักออกจากระบบ</small>
+          </div>
+          <div class="net-weight">
+            <strong>น้ำหนักสุทธิ:</strong>
+            <span>{{ displayNetWeight() }}</span>
+            <small v-if="!isEditing" class="field-description">น้ำหนักสุทธิสุดท้าย (น้ำหนักก่อนหัก - น้ำหนักที่หัก)</small>
+          </div>
+          <div v-if="isEditing" class="net-weight">
+            <strong>น้ำหนักสุทธิ (คำนวณ):</strong>
+            <span>{{ ((editableWeightBeforeDeduction || 0) - (editableWeightDeduction || 0)).toLocaleString('en-US') }} กก.</span>
+            <small class="field-description">น้ำหนักสุทธิที่คำนวณจากข้อมูลที่แก้ไข</small>
+          </div>
         </div>
         
         <div v-if="ticket.WE_PARENT">
@@ -494,6 +598,9 @@ async function handleSearchPlan() {
   font-weight: bold;
   background-color: #eef7f3 !important;
   color: var(--primary-color);
+  padding: 0.8rem;
+  border-radius: 4px;
+  border: 1px solid #c3e6c3;
 }
 .edit-input {
   width: 100%;
@@ -865,5 +972,13 @@ button.search-button:disabled {
   height: 1px;
   background-color: #e5e7eb;
   margin: 1.5rem 0;
+}
+
+.field-description {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+  color: #6c757d;
+  font-style: italic;
 }
 </style>

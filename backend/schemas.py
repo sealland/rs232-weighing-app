@@ -38,6 +38,15 @@ class WeightTicketCreate(BaseModel):
     # รับ List ของ WeightTicketItemCreate เข้ามาได้
     items: Optional[List[WeightTicketItemCreate]] = None
     
+    # --- เพิ่มฟิลด์ใหม่สำหรับข้อมูลคนขับและประเภทรถ ---
+    WE_DRIVER: Optional[str] = None      # ชื่อคนขับ
+    WE_TRUCK_CHAR: Optional[str] = None  # ประเภทรถ
+    # --- เพิ่มฟิลด์สำหรับน้ำหนักที่หักและน้ำหนักต้นฉบับ ---
+    WE_WEIGHTMINUS: Optional[float] = None  # น้ำหนักที่หัก (การหักน้ำหนัก)
+    WE_WEIGHTIN_ORI: Optional[float] = None  # น้ำหนักเข้าต้นฉบับ
+    WE_WEIGHTOUT_ORI: Optional[float] = None  # น้ำหนักออกต้นฉบับ
+    WE_WEIGHTTOT: Optional[float] = None  # น้ำหนักก่อนหัก (บันทึกตอนชั่งออก)
+    
 class WeightTicketUpdateWeighOut(BaseModel):
     WE_WEIGHTOUT: float
 
@@ -49,6 +58,14 @@ class WeightTicketUpdate(BaseModel):
     WE_MAT_CD: Optional[str] = None
     WE_MAT: Optional[str] = None
     WE_QTY: Optional[float] = None # <-- เพิ่มบรรทัดนี้
+    
+    # --- เพิ่มฟิลด์ใหม่สำหรับการอัปเดตข้อมูลคนขับและประเภทรถ ---
+    WE_DRIVER: Optional[str] = None      # ชื่อคนขับ
+    WE_TRUCK_CHAR: Optional[str] = None  # ประเภทรถ
+    # --- เพิ่มฟิลด์สำหรับการอัปเดตน้ำหนัก ---
+    WE_WEIGHTTOT: Optional[float] = None  # น้ำหนักก่อนหัก
+    WE_WEIGHTMINUS: Optional[float] = None  # น้ำหนักที่หัก
+    WE_WEIGHTNET: Optional[float] = None  # น้ำหนักสุทธิ
 
 # Schema สำหรับการอ่านข้อมูลจากฐานข้อมูลมาแสดงผล
 class WeightTicket(WeightTicketBase):
@@ -75,6 +92,11 @@ class WeightTicket(WeightTicketBase):
     # --- เพิ่มฟิลด์ที่จำเป็นสำหรับรายงาน ---
     WE_DRIVER: Optional[str] = None  # คนขับรถ
     WE_TRUCK_CHAR: Optional[str] = None  # ประเภทรถ
+    # --- เพิ่มฟิลด์สำหรับน้ำหนักที่หักและน้ำหนักต้นฉบับ ---
+    WE_WEIGHTMINUS: Optional[float] = None  # น้ำหนักที่หัก (การหักน้ำหนัก)
+    WE_WEIGHTIN_ORI: Optional[float] = None  # น้ำหนักเข้าต้นฉบับ
+    WE_WEIGHTOUT_ORI: Optional[float] = None  # น้ำหนักออกต้นฉบับ
+    WE_WEIGHTTOT: Optional[float] = None  # น้ำหนักก่อนหัก (บันทึกตอนชั่งออก)
     # -----------------------------
 
     class Config:
@@ -124,6 +146,10 @@ class CarVisit(BaseModel):
     KUNNR: Optional[str] = None
     Ship_point: Optional[str] = None
     TICKET: Optional[str] = None
+    
+    # --- เพิ่มฟิลด์ใหม่สำหรับข้อมูลคนขับและประเภทรถ ---
+    CARTYPE: Optional[str] = None      # ประเภทรถ
+    CARLDRIVER: Optional[str] = None   # ชื่อคนขับ
 
     class Config:
         from_attributes = True

@@ -35,6 +35,11 @@ class WeightTicket(Base_scale):
     # --- เพิ่มฟิลด์ที่จำเป็นสำหรับรายงาน ---
     WE_DRIVER = Column(String, nullable=True)  # คนขับรถ
     WE_TRUCK_CHAR = Column(String, nullable=True)  # ประเภทรถ
+    # --- เพิ่มฟิลด์สำหรับน้ำหนักที่หักและน้ำหนักต้นฉบับ ---
+    WE_WEIGHTMINUS = Column(Float, nullable=True)  # น้ำหนักที่หัก (การหักน้ำหนัก)
+    WE_WEIGHTIN_ORI = Column(Float, nullable=True)  # น้ำหนักเข้าต้นฉบับ
+    WE_WEIGHTOUT_ORI = Column(Float, nullable=True)  # น้ำหนักออกต้นฉบับ
+    WE_WEIGHTTOT = Column(Float, nullable=True)  # น้ำหนักก่อนหัก (บันทึกตอนชั่งออก)
     # -----------------------------
 
     items = relationship("WeightTicketItem", back_populates="ticket")
@@ -91,6 +96,10 @@ class CarVisit(Base_pp): # <-- ใช้ Base_pp เพราะอยู่ใ�
     KUNNR = Column(String)         # รหัสลูกค้า
     Ship_point = Column(String)    # จุดขึ้นของ
     TICKET = Column(String, nullable=True)
+    
+    # --- เพิ่มฟิลด์ใหม่สำหรับข้อมูลคนขับและประเภทรถ ---
+    CARTYPE = Column(String, nullable=True)      # ประเภทรถ
+    CARLDRIVER = Column(String, nullable=True)   # ชื่อคนขับ
 
 
     # บอก SQLAlchemy ว่า View นี้ไม่มี Primary Key ที่ชัดเจน

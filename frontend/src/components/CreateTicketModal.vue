@@ -15,6 +15,9 @@ const emit = defineEmits(['close', 'save']);
 const selectedQueueSeq = ref('');
 const autoFilledData = ref(null);
 const finalWeightIn = ref(0);
+// --- เพิ่ม State สำหรับน้ำหนักก่อนหักและน้ำหนักที่หัก ---
+const weightBeforeDeduction = ref(0);  // น้ำหนักก่อนหัก (WE_WEIGHTTOT)
+const weightDeduction = ref(0);        // น้ำหนักที่หัก (WE_WEIGHTMINUS)
 
 // State for Searching
 const planIdToSearch = ref('');
@@ -100,6 +103,10 @@ watch(() => props.visible, async (isVisible) => {
   finalWeightIn.value = props.initialWeightIn || 0;
   console.log('finalWeightIn set to:', finalWeightIn.value);
   finalCombinedItems.value = [];
+  
+  // --- ตั้งค่าน้ำหนักก่อนหักและน้ำหนักที่หัก ---
+  weightBeforeDeduction.value = props.initialWeightIn || 0;  // เริ่มต้นเท่ากับน้ำหนักชั่งเข้า
+  weightDeduction.value = 0;  // เริ่มต้นเป็น 0
   
   // Fetch car queue data
   await fetchCarQueue();
@@ -238,7 +245,7 @@ async function handleSave() {
     
     console.log('Source data:', sourceData);
     
-    // แก้ไขส่วนการสร้าง ticketData ในฟังก์ชัน handleSave
+    // แก้ไขส่วนการสร้าง ticketData ในฟังก์ชัน handleSave - เพิ่มข้อมูลคนขับและประเภทรถ
     const ticketData = {
       WE_LICENSE: sourceData.CARLICENSE,
       WE_WEIGHTIN: parseFloat(finalWeightIn.value),
@@ -246,6 +253,13 @@ async function handleSave() {
       WE_VENDOR_CD: sourceData.KUNNR,
       WE_SEQ: selectedQueueObject.SEQ,
       parent_id: sourceData.PARENT_ID || null,
+      // --- เพิ่มข้อมูลคนขับและประเภทรถ ---
+      WE_DRIVER: selectedQueueObject.CARLDRIVER || null,        // ชื่อคนขับ
+      WE_TRUCK_CHAR: selectedQueueObject.CARTYPE || null,      // ประเภทรถ
+      // --- เพิ่มข้อมูลน้ำหนักที่หัก ---
+      WE_WEIGHTMINUS: parseFloat(weightDeduction.value),        // น้ำหนักที่หัก
+      // --- เพิ่มข้อมูลน้ำหนักต้นฉบับ ---
+      WE_WEIGHTIN_ORI: parseFloat(finalWeightIn.value),         // น้ำหนักเข้าต้นฉบับ
       // แก้ไขการส่งรายการสินค้า - ใช้ข้อมูลจาก Shipment Plan
       items: finalCombinedItems.value.length > 0 ? finalCombinedItems.value.map(item => {
         return {
@@ -314,10 +328,12 @@ async function handleSave() {
           <div v-if="carQueueError" class="error-message">เกิดข้อผิดพลาด: {{ carQueueError }}</div>
         </div>
 
-        <!-- แสดงข้อมูลรถ -->
+        <!-- แสดงข้อมูลรถ - เพิ่มฟิลด์คนขับและประเภทรถ -->
         <div v-if="selectedQueueObject || autoFilledData" class="auto-filled-data">
           <div class="data-display"><strong>ทะเบียน:</strong> {{ (selectedQueueObject || autoFilledData)?.CARLICENSE }}</div>
           <div class="data-display"><strong>ลูกค้า:</strong> {{ (selectedQueueObject || autoFilledData)?.AR_NAME }}</div>
+          <div class="data-display"><strong>คนขับ:</strong> {{ (selectedQueueObject || autoFilledData)?.CARLDRIVER || 'ไม่ระบุ' }}</div>
+          <div class="data-display"><strong>ประเภทรถ:</strong> {{ (selectedQueueObject || autoFilledData)?.CARTYPE || 'ไม่ระบุ' }}</div>
         </div>
 
         <!-- แสดงข้อความเมื่อเป็นชั่งต่อเนื่อง -->
@@ -418,6 +434,45 @@ async function handleSave() {
           <label>น้ำหนักชั่งเข้า</label>
           <div class="weight-preview">{{ (finalWeightIn || 0).toLocaleString('en-US') }} กก.</div>
         </div>
+        
+        <!-- Part 4: น้ำหนักก่อนหักและน้ำหนักที่หัก (ใหม่) -->
+        <div class="weight-deduction-section">
+          <h4>ข้อมูลน้ำหนักเพิ่มเติม</h4>
+          <div class="weight-inputs">
+            <div class="form-group">
+              <label for="weight-before-deduction">น้ำหนักก่อนหัก (กก.)</label>
+              <input 
+                type="number" 
+                id="weight-before-deduction"
+                v-model.number="weightBeforeDeduction" 
+                step="0.01" 
+                min="0"
+                class="weight-input"
+                placeholder="0.00"
+              >
+              <small class="input-help">น้ำหนักสุทธิก่อนทำการหักน้ำหนัก (น้ำหนักเข้า - น้ำหนักออก)</small>
+            </div>
+            <div class="form-group">
+              <label for="weight-deduction">น้ำหนักที่หัก (กก.)</label>
+              <input 
+                type="number" 
+                id="weight-deduction"
+                v-model.number="weightDeduction" 
+                step="0.01" 
+                min="0"
+                class="weight-input"
+                placeholder="0.00"
+              >
+              <small class="input-help">น้ำหนักที่หักออกจากระบบ</small>
+            </div>
+          </div>
+          <div class="weight-summary">
+            <div class="summary-item">
+              <span class="summary-label">น้ำหนักสุทธิ:</span>
+              <span class="summary-value">{{ ((weightBeforeDeduction || 0) - (weightDeduction || 0)).toLocaleString('en-US') }} กก.</span>
+            </div>
+          </div>
+        </div>
         <div class="modal-footer">
           <button type="button" @click="emit('close')" class="cancel-button">ยกเลิก</button>
           <button type="submit" class="save-button">บันทึกการสร้างบัตร</button>
@@ -442,8 +497,8 @@ async function handleSave() {
 .form-group { margin-bottom: 1.2rem; }
 .form-group label { display: block; font-weight: bold; margin-bottom: 0.5rem; }
 .form-group input[type="text"], .form-group select { width: 100%; padding: 0.8rem; border: 1px solid #ddd; border-radius: 4px; font-size: 1rem; box-sizing: border-box; background-color: white; }
-.auto-filled-data { display: flex; gap: 1rem; margin-top: 1rem; }
-.data-display { flex: 1; padding: 0.8rem; background-color: #f0f2f5; border-radius: 4px; font-weight: bold; }
+.auto-filled-data { display: flex; gap: 1rem; margin-top: 1rem; flex-wrap: wrap; }
+.data-display { flex: 1; min-width: 200px; padding: 0.8rem; background-color: #f0f2f5; border-radius: 4px; font-weight: bold; }
 .weight-preview { font-size: 1.5rem; font-weight: bold; color: var(--primary-color); background-color: #f0f2f5; padding: 0.8rem; border-radius: 4px; text-align: right; }
 .weighing-type-selector div { display: flex; gap: 1.5rem; }
 .weighing-type-selector label { display: flex; align-items: center; gap: 0.5rem; font-weight: normal; }
@@ -533,5 +588,82 @@ async function handleSave() {
 
 .info-icon {
   font-size: 1.1rem;
+}
+
+/* --- CSS สำหรับส่วนน้ำหนักก่อนหักและน้ำหนักที่หัก --- */
+.weight-deduction-section {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+}
+
+.weight-deduction-section h4 {
+  margin: 0 0 1rem 0;
+  color: #495057;
+  font-size: 1.1rem;
+}
+
+.weight-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.weight-input {
+  width: 100%;
+  padding: 0.8rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 1rem;
+  text-align: right;
+  box-sizing: border-box;
+}
+
+.weight-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(66, 184, 131, 0.2);
+}
+
+.input-help {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+  color: #6c757d;
+  font-style: italic;
+}
+
+.weight-summary {
+  padding: 0.75rem;
+  background-color: #e8f5e8;
+  border-radius: 4px;
+  border: 1px solid #c3e6c3;
+}
+
+.summary-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.summary-label {
+  font-weight: bold;
+  color: #155724;
+}
+
+.summary-value {
+  font-weight: bold;
+  font-size: 1.1rem;
+  color: var(--primary-color);
+}
+
+/* Responsive design สำหรับหน้าจอเล็ก */
+@media (max-width: 768px) {
+  .weight-inputs {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
