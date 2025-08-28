@@ -674,7 +674,7 @@ class RS232ClientGUI:
                     print(f"Error loading config: {e}. Using defaults.")
             else:
                 print("Config file not found. Using defaults.")
-                
+            
             return {
                 'port': loaded_settings['port'],
                 'baudrate': loaded_settings['baudrate'],
@@ -815,7 +815,7 @@ class RS232ClientGUI:
                 selected_pattern = 'Default'  # Fallback to default
                 
             known_weight_indicators = SCALE_PATTERNS[selected_pattern]
-            
+        
             extracted_weight_values = []
             for indicator_text, pattern_regex, is_zero_indicator in known_weight_indicators:
                 matches = re.findall(pattern_regex, cleaned_text)
@@ -829,7 +829,7 @@ class RS232ClientGUI:
                                 extracted_weight_values.append(weight_val)
                             except ValueError:
                                 pass
-                                
+                            
             if extracted_weight_values:
                 non_zero_values = [val for val in extracted_weight_values if val != "0"]
                 if non_zero_values:
@@ -906,12 +906,12 @@ class RS232ClientGUI:
             if self.serial_connection and self.serial_connection.is_open:
                 self.serial_connection.close()
                 
-            if self.websocket and self.loop:
-                try:
-                    asyncio.run_coroutine_threadsafe(self.websocket.close(), self.loop)
-                except Exception as e:
-                    print(f"WebSocket close error: {e}")
-                    
+                if self.websocket and self.loop:
+                    try:
+                        asyncio.run_coroutine_threadsafe(self.websocket.close(), self.loop)
+                    except Exception as e:
+                        print(f"WebSocket close error: {e}")
+            
             self.start_btn.config(state='normal')
             self.stop_btn.config(state='disabled')
             self.serial_status_label.config(text="🔴 Serial: Disconnected")
