@@ -11,11 +11,17 @@ import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 from datetime import datetime
 import serial.tools.list_ports
+import webbrowser
+import sys
+from PIL import Image, ImageTk
+import pystray
+from pystray import MenuItem as item
 
 # Configuration
 CLIENT_CONFIG_FILE = "client_config.ini"
 SERVER_WEBSOCKET_URL = "ws://localhost:8765"
 CLIENT_ID = "scale_001"
+FRONTEND_URL = "http://192.168.132.7:5173/"  # URL สำหรับ Frontend
 
 # Serial Configuration
 DEFAULT_SERIAL_PORT = "COM1"
@@ -24,6 +30,7 @@ DEFAULT_PARITY = "E"      # เปลี่ยนจาก N เป็น E ต�
 DEFAULT_STOP_BITS = "1"
 DEFAULT_BYTE_SIZE = "7"   # เปลี่ยนจาก 8 เป็น 7 ตาม HyperTerminal
 DEFAULT_READ_TIMEOUT = 1.0  # เพิ่มจาก 0.05 เป็น 1.0 วินาที
+DEFAULT_SENSITIVITY = 0.1  # ความไวในการอ่านน้ำหนัก (kg)
 
 # Branch Configuration
 BRANCH_CONFIG = {
@@ -57,8 +64,10 @@ SCALE_PATTERNS = {
         ("ST", r"ST\s+(0{3,})", True),
     ],
     'ST,GS Format': [
-        ("ST,GS", r"ST,GS,\+([0-9]+\.?[0-9]*)kg", False),  # น้ำหนักจริง เช่น +123.4kg
-        ("ST,GS", r"ST,GS,\+0{3,}\.?0*kg", True),          # น้ำหนัก 0 เช่น +00000.0kg
+        ("ST,GS", r"(ST),GS,\+([0-9]+\.?[0-9]*)kg", False),  # น้ำหนัก Stable เช่น ST,GS,+123.4kg
+        ("US,GS", r"(US),GS,\+([0-9]+\.?[0-9]*)kg", False),  # น้ำหนัก Unstable เช่น US,GS,+123.4kg
+        ("ST,GS", r"(ST),GS,\+0{3,}\.?0*kg", True),          # น้ำหนัก 0 Stable เช่น ST,GS,+00000.0kg
+        ("US,GS", r"(US),GS,\+0{3,}\.?0*kg", True),          # น้ำหนัก 0 Unstable เช่น US,GS,+00000.0kg
     ],
     'Mettler Toledo': [
         ("MT", r"MT\s+(\d+)", False),
@@ -116,6 +125,13 @@ class RS232ClientGUI:
         self.is_running = False
         self.loop = None
         
+        # Tray variables
+        self.tray_icon = None
+        self.is_minimized_to_tray = False
+        
+        # Sensitivity variable
+        self.sensitivity = DEFAULT_SENSITIVITY
+        
         # GUI variables
         self.port_var = tk.StringVar(value=self.serial_config['port'])
         self.baudrate_var = tk.StringVar(value=str(self.serial_config['baudrate']))
@@ -123,6 +139,7 @@ class RS232ClientGUI:
         self.stopbits_var = tk.StringVar(value=self.get_stopbits_key())
         self.bytesize_var = tk.StringVar(value=self.get_bytesize_key())
         self.timeout_var = tk.StringVar(value=str(self.serial_config['timeout']))
+        self.sensitivity_var = tk.StringVar(value=str(self.sensitivity))
         self.server_url_var = tk.StringVar(value=SERVER_WEBSOCKET_URL)
         self.client_id_var = tk.StringVar(value=CLIENT_ID)
         self.branch_var = tk.StringVar(value='สำนักงานใหญ่ P8')  # Default branch
@@ -136,8 +153,15 @@ class RS232ClientGUI:
         self.setup_ui()
         self.update_available_ports()
         
+        # โหลดค่า sensitivity จาก config
+        self.sensitivity = self.serial_config.get('sensitivity', DEFAULT_SENSITIVITY)
+        self.sensitivity_var.set(str(self.sensitivity))
+        
+        # โหลด config เพิ่มเติมหลังจากสร้าง GUI แล้ว
+        self.load_additional_config()
+        
         # Log current configuration for debugging หลังจากสร้าง UI แล้ว
-        self.log_message(f"Default config: {self.serial_config['port']}, {self.serial_config['baudrate']}, {self.get_parity_key()}, {self.get_stopbits_key()}, {self.get_bytesize_key()}")
+        self.log_message(f"Default config: {self.serial_config['port']}, {self.serial_config['baudrate']}, {self.get_parity_key()}, {self.get_stopbits_key()}, {self.get_bytesize_key()}, Sensitivity: {self.sensitivity}")
         
         # ตรวจสอบสถานะ Serial port หลังจากเริ่มต้น
         self.root.after(1000, self.test_connection_status)  # ตรวจสอบหลังจาก 1 วินาที
@@ -217,6 +241,11 @@ class RS232ClientGUI:
         ttk.Label(config_frame, text="Timeout (sec):", font=('Tahoma', 8)).grid(row=5, column=0, sticky=tk.W, padx=(0, 8))
         timeout_entry = ttk.Entry(config_frame, textvariable=self.timeout_var, width=12, font=('Tahoma', 8))
         timeout_entry.grid(row=5, column=1, sticky=(tk.W, tk.E), pady=3)
+        
+        # Sensitivity
+        ttk.Label(config_frame, text="Sensitivity (kg):", font=('Tahoma', 8)).grid(row=6, column=0, sticky=tk.W, padx=(0, 8))
+        sensitivity_entry = ttk.Entry(config_frame, textvariable=self.sensitivity_var, width=12, font=('Tahoma', 8))
+        sensitivity_entry.grid(row=6, column=1, sticky=(tk.W, tk.E), pady=3)
         
         # Scale Pattern Configuration Frame
         scale_frame = ttk.LabelFrame(left_panel, text="Scale Pattern Configuration", padding="8")
@@ -330,6 +359,21 @@ class RS232ClientGUI:
         
         pattern_test_btn = ttk.Button(control_frame, text="🔍 Test Pattern", command=self.test_pattern_parsing, width=10)
         pattern_test_btn.grid(row=0, column=6, padx=(5, 0))
+        
+        # Frontend and Tray Buttons Frame
+        frontend_tray_frame = ttk.Frame(left_panel)
+        frontend_tray_frame.grid(row=6, column=0, columnspan=2, pady=(0, 8))
+        
+        # Frontend Button - ใหญ่และชัดเจน
+        self.frontend_btn = ttk.Button(frontend_tray_frame, text="🌐 OPEN FRONTEND", 
+                                      command=self.open_frontend, width=20, 
+                                      style='Accent.TButton')
+        self.frontend_btn.grid(row=0, column=0, padx=(0, 10))
+        
+        # Tray Button
+        self.tray_btn = ttk.Button(frontend_tray_frame, text="📌 Hide to Tray", 
+                                  command=self.minimize_to_tray, width=12)
+        self.tray_btn.grid(row=0, column=1)
 
         # Config Path Note
         config_abs_path = os.path.abspath(CLIENT_CONFIG_FILE)
@@ -337,7 +381,7 @@ class RS232ClientGUI:
                                      text=f"Config: {os.path.basename(config_abs_path)}", 
                                      font=('Tahoma', 7), 
                                      foreground='gray')
-        config_note_label.grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        config_note_label.grid(row=7, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
         
         # Right Panel - Status & Monitoring
         right_panel = ttk.Frame(main_frame)
@@ -827,10 +871,21 @@ class RS232ClientGUI:
             try:
                 decoded = data_bytes.decode('latin-1', errors='ignore').strip()
                 if decoded:
-                    parsed_value = self.parse_scale_data(decoded)
-                    if parsed_value != "N/A":
-                        self.last_weight = parsed_value
-                        self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                    # แยกข้อมูลตามบรรทัด
+                    lines = []
+                    for line in decoded.split('\r\n'):
+                        lines.extend(line.split('\n'))
+                    
+                    # ตรวจสอบทุกบรรทัด
+                    for line in lines:
+                        line = line.strip()
+                        if line:
+                            parsed_value = self.parse_scale_data(line)
+                            if parsed_value != "N/A":
+                                self.last_weight = parsed_value
+                                self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                # ไม่ log ทุกครั้งเพื่อลด spam
+                                break
             except Exception as e:
                 # ไม่เป็นไรถ้า parse ไม่ได้
                 pass
@@ -972,42 +1027,68 @@ class RS232ClientGUI:
                 'parity_key': DEFAULT_PARITY,
                 'stopbits_key': DEFAULT_STOP_BITS,
                 'bytesize_key': DEFAULT_BYTE_SIZE,
-                'timeout': DEFAULT_READ_TIMEOUT
+                'timeout': DEFAULT_READ_TIMEOUT,
+                'sensitivity': DEFAULT_SENSITIVITY
             }
             
-            if os.path.exists(CLIENT_CONFIG_FILE):
-                try:
-                    config.read(CLIENT_CONFIG_FILE)
-                    if 'SerialConfig' in config:
-                        cfg_section = config['SerialConfig']
-                        loaded_settings['port'] = cfg_section.get('Port', DEFAULT_SERIAL_PORT)
-                        loaded_settings['baudrate'] = cfg_section.getint('BaudRate', DEFAULT_BAUD_RATE)
-                        loaded_settings['parity_key'] = cfg_section.get('Parity', DEFAULT_PARITY).upper()
-                        loaded_settings['stopbits_key'] = cfg_section.get('StopBits', DEFAULT_STOP_BITS)
-                        loaded_settings['bytesize_key'] = cfg_section.get('ByteSize', DEFAULT_BYTE_SIZE)
-                        loaded_settings['timeout'] = cfg_section.getfloat('ReadTimeout', DEFAULT_READ_TIMEOUT)
+            # เก็บข้อมูล config เพิ่มเติมสำหรับโหลดทีหลัง
+            self.config_data = {
+                'branch': 'สำนักงานใหญ่ P8',
+                'scale_pattern': 'Raw Data (No Parse)',
+                'custom_prefix': 'CUSTOM3',
+                'custom_regex': r'CUSTOM3\s+(\d+)',
+                'custom_iszero': False
+            }
+            
+            # ตรวจสอบไฟล์ config ใน path ของโปรแกรม
+            config_paths = [
+                CLIENT_CONFIG_FILE,  # ไฟล์ในโฟลเดอร์ปัจจุบัน
+                os.path.join(os.path.dirname(sys.executable), CLIENT_CONFIG_FILE),  # ไฟล์ในโฟลเดอร์โปรแกรม
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), CLIENT_CONFIG_FILE)  # ไฟล์ในโฟลเดอร์ script
+            ]
+            
+            config_loaded = False
+            for config_path in config_paths:
+                if os.path.exists(config_path):
+                    try:
+                        config.read(config_path)
+                        if 'SerialConfig' in config:
+                            cfg_section = config['SerialConfig']
+                            loaded_settings['port'] = cfg_section.get('Port', DEFAULT_SERIAL_PORT)
+                            loaded_settings['baudrate'] = cfg_section.getint('BaudRate', DEFAULT_BAUD_RATE)
+                            loaded_settings['parity_key'] = cfg_section.get('Parity', DEFAULT_PARITY).upper()
+                            loaded_settings['stopbits_key'] = cfg_section.get('StopBits', DEFAULT_STOP_BITS)
+                            loaded_settings['bytesize_key'] = cfg_section.get('ByteSize', DEFAULT_BYTE_SIZE)
+                            loaded_settings['timeout'] = cfg_section.getfloat('ReadTimeout', DEFAULT_READ_TIMEOUT)
+                            loaded_settings['sensitivity'] = cfg_section.getfloat('Sensitivity', DEFAULT_SENSITIVITY)
                             
-                        # Load branch configuration
-                        if 'BranchConfig' in config:
-                            branch_section = config['BranchConfig']
-                            self.branch_var.set(branch_section.get('Branch', 'สำนักงานใหญ่ P8'))
+                            # Load branch configuration
+                            if 'BranchConfig' in config:
+                                branch_section = config['BranchConfig']
+                                self.config_data['branch'] = branch_section.get('Branch', 'สำนักงานใหญ่ P8')
+                                
+                            # Load scale pattern configuration
+                            if 'ScaleConfig' in config:
+                                scale_section = config['ScaleConfig']
+                                self.config_data['scale_pattern'] = scale_section.get('Pattern', 'Raw Data (No Parse)')
+                                
+                            # Load custom pattern 3 configuration
+                            if 'CustomPattern3Config' in config:
+                                custom_section = config['CustomPattern3Config']
+                                self.config_data['custom_prefix'] = custom_section.get('Prefix', 'CUSTOM3')
+                                self.config_data['custom_regex'] = custom_section.get('Regex', r'CUSTOM3\s+(\d+)')
+                                self.config_data['custom_iszero'] = custom_section.getboolean('IsZero', False)
                             
-                        # Load scale pattern configuration
-                        if 'ScaleConfig' in config:
-                            scale_section = config['ScaleConfig']
-                            self.scale_pattern_var.set(scale_section.get('Pattern', 'Default'))
+                            config_loaded = True
+                            print(f"Config loaded from: {config_path}")
+                            break
                             
-                        # Load custom pattern 3 configuration
-                        if 'CustomPattern3Config' in config:
-                            custom_section = config['CustomPattern3Config']
-                            self.custom_pattern_prefix_var.set(custom_section.get('Prefix', 'CUSTOM3'))
-                            self.custom_pattern_regex_var.set(custom_section.get('Regex', r'CUSTOM3\s+(\d+)'))
-                            self.custom_pattern_is_zero_var.set(custom_section.getboolean('IsZero', False))
-                            
-                except Exception as e:
-                    print(f"Error loading config: {e}. Using defaults.")
-            else:
-                print("Config file not found. Using defaults.")
+                    except Exception as e:
+                        print(f"Error loading config from {config_path}: {e}")
+                        continue
+            
+            if not config_loaded:
+                print("No valid config file found. Using defaults.")
             
             return {
                 'port': loaded_settings['port'],
@@ -1015,7 +1096,8 @@ class RS232ClientGUI:
                 'parity': parity_map.get(loaded_settings['parity_key'], serial.PARITY_NONE),
                 'stopbits': stop_bits_map.get(loaded_settings['stopbits_key'], serial.STOPBITS_ONE),
                 'bytesize': byte_size_map.get(loaded_settings['bytesize_key'], serial.EIGHTBITS),
-                'timeout': loaded_settings['timeout']
+                'timeout': loaded_settings['timeout'],
+                'sensitivity': loaded_settings['sensitivity']
             }
         except Exception as e:
             print(f"Load config error: {e}")
@@ -1025,7 +1107,8 @@ class RS232ClientGUI:
                 'parity': serial.PARITY_NONE,
                 'stopbits': serial.STOPBITS_ONE,
                 'bytesize': serial.EIGHTBITS,
-                'timeout': DEFAULT_READ_TIMEOUT
+                'timeout': DEFAULT_READ_TIMEOUT,
+                'sensitivity': DEFAULT_SENSITIVITY
             }
         
     def save_configuration(self):
@@ -1038,7 +1121,8 @@ class RS232ClientGUI:
                 'Parity': self.parity_var.get(),
                 'StopBits': self.stopbits_var.get(),
                 'ByteSize': self.bytesize_var.get(),
-                'ReadTimeout': self.timeout_var.get()
+                'ReadTimeout': self.timeout_var.get(),
+                'Sensitivity': self.sensitivity_var.get()
             }
             
             # Save branch configuration
@@ -1058,10 +1142,15 @@ class RS232ClientGUI:
                 'IsZero': str(self.custom_pattern_is_zero_var.get())
             }
             
-            with open(CLIENT_CONFIG_FILE, 'w') as configfile:
+            # บันทึกไฟล์ในโฟลเดอร์โปรแกรม
+            config_path = os.path.join(os.path.dirname(sys.executable), CLIENT_CONFIG_FILE)
+            if not os.path.exists(os.path.dirname(config_path)):
+                config_path = CLIENT_CONFIG_FILE  # Fallback to current directory
+            
+            with open(config_path, 'w') as configfile:
                 config.write(configfile)
                 
-            config_abs_path = os.path.abspath(CLIENT_CONFIG_FILE)
+            config_abs_path = os.path.abspath(config_path)
             self.log_message(f"Configuration saved to: {config_abs_path}")
             messagebox.showinfo("Success", f"Configuration saved successfully!\n\nFile: {config_abs_path}")
             
@@ -1418,25 +1507,46 @@ class RS232ClientGUI:
             for indicator_text, pattern_regex, is_zero_indicator in known_weight_indicators:
                 matches = re.findall(pattern_regex, cleaned_text)
                 if matches:
-                    for num_str_from_match in matches:
+                    for match in matches:
                         if is_zero_indicator:
                             extracted_weight_values.append("0")
                         else:
                             try:
-                                # รองรับทั้งตัวเลขเต็มและทศนิยม
-                                if '.' in num_str_from_match:
-                                    weight_val = str(float(num_str_from_match))
+                                # สำหรับ ST,GS Format ที่มี 2 capture groups
+                                if isinstance(match, tuple) and len(match) == 2:
+                                    num_str_from_match = match[1]  # ตัวเลข (ตัวที่ 2)
                                 else:
-                                    weight_val = str(int(num_str_from_match))
-                                extracted_weight_values.append(weight_val)
+                                    # สำหรับ Pattern อื่นๆ ที่มี 1 capture group
+                                    num_str_from_match = match
+                                
+                                # รองรับทั้งตัวเลขเต็มและทศนิยม รวมถึงค่าติดลบ
+                                if '.' in num_str_from_match:
+                                    weight_val = float(num_str_from_match)
+                                else:
+                                    weight_val = float(int(num_str_from_match))
+                                
+                                # จัดการค่าติดลบ - ถ้าเป็นค่าติดลบเล็กน้อย ให้ถือเป็น 0
+                                if weight_val < 0:
+                                    if abs(weight_val) < 0.1:  # ค่าติดลบน้อยกว่า 0.1 kg
+                                        weight_val = 0.0
+                                    else:
+                                        # ค่าติดลบที่มากกว่า ให้ใช้ค่าสัมบูรณ์
+                                        weight_val = abs(weight_val)
+                                
+                                # ใช้ความไวในการกรองข้อมูล
+                                sensitivity = float(self.sensitivity_var.get())
+                                if abs(weight_val) < sensitivity:
+                                    weight_val = 0.0
+                                
+                                extracted_weight_values.append(str(weight_val))
                             except ValueError:
                                 pass
                             
             if extracted_weight_values:
-                non_zero_values = [val for val in extracted_weight_values if val != "0"]
+                non_zero_values = [val for val in extracted_weight_values if val != "0" and val != "0.0"]
                 if non_zero_values:
                     return non_zero_values[-1]
-                elif "0" in extracted_weight_values:
+                elif "0" in extracted_weight_values or "0.0" in extracted_weight_values:
                     return "0"
             return "N/A"
         except Exception as e:
@@ -1450,25 +1560,85 @@ class RS232ClientGUI:
             return self.last_weight
             
         try:
+            # ตรวจสอบและจำกัดขนาด buffer เพื่อป้องกัน overflow
+            if len(self.read_buffer) > 2000:  # เพิ่มขนาด buffer limit
+                self.read_buffer = self.read_buffer[-1000:]  # เก็บข้อมูลล่าสุด 1000 bytes
+                self.log_message("Buffer size limit reached, trimming...")
+                
+                # หลังจาก trim แล้ว ให้ประมวลผลข้อมูลใหม่
+                try:
+                    decoded_message = self.read_buffer.decode('latin-1', errors='ignore')
+                    lines = []
+                    for line in decoded_message.split('\r\n'):
+                        lines.extend(line.split('\n'))
+                    
+                    # ประมวลผลบรรทัดสุดท้ายเพื่อหาน้ำหนักล่าสุด
+                    for line in reversed(lines):
+                        line = line.strip()
+                        if line:
+                            try:
+                                parsed_value = self.parse_scale_data(line)
+                                if parsed_value != "N/A":
+                                                                                # ตรวจสอบว่าน้ำหนักเป็น 0 หรือไม่
+                                            if parsed_value != "0" and parsed_value != "0.0":
+                                                self.last_weight = parsed_value
+                                                self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                                # ลดการ log เพื่อเพิ่มความเร็ว
+                                                # self.log_message(f"Updated weight after buffer trim: {parsed_value}")
+                                                break
+                            except Exception as e:
+                                continue
+                except Exception as e:
+                    self.log_message(f"Error processing trimmed buffer: {e}")
+            
             # อ่านข้อมูลที่มีอยู่ใน buffer
             if ser.in_waiting > 0:
-                new_bytes = ser.read(ser.in_waiting)
-                self.read_buffer += new_bytes
-                
-                # ส่งข้อมูลไปยัง real-time display
-                if new_bytes and self.realtime_monitoring_active:
-                    self.add_realtime_data(new_bytes)
-                
-                # Log raw data for debugging
-                if new_bytes:
-                    self.log_message(f"Buffer data: {new_bytes.hex()} (ASCII: {new_bytes.decode('latin-1', errors='ignore')})")
+                try:
+                    new_bytes = ser.read(ser.in_waiting)
+                    if new_bytes:
+                        self.read_buffer += new_bytes
+                        
+                        # ส่งข้อมูลไปยัง real-time display
+                        if self.realtime_monitoring_active:
+                            self.add_realtime_data(new_bytes)
+                        
+                        # ประมวลผลข้อมูลใหม่ทันที
+                        try:
+                            decoded_new = new_bytes.decode('latin-1', errors='ignore')
+                            lines = []
+                            for line in decoded_new.split('\r\n'):
+                                lines.extend(line.split('\n'))
+                            
+                            # ตรวจสอบข้อมูลใหม่
+                            for line in lines:
+                                line = line.strip()
+                                if line:
+                                    try:
+                                        parsed_value = self.parse_scale_data(line)
+                                        if parsed_value != "N/A":
+                                            # ตรวจสอบว่าน้ำหนักเป็น 0 หรือไม่
+                                            if parsed_value != "0" and parsed_value != "0.0":
+                                                self.last_weight = parsed_value
+                                                self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                                # ลดการ log เพื่อเพิ่มความเร็ว
+                                                # self.log_message(f"New weight from buffer: {parsed_value}")
+                                    except Exception as e:
+                                        continue
+                        except Exception as e:
+                            pass  # ไม่ log error สำหรับการประมวลผลข้อมูลใหม่
+                        
+                        # Log raw data for debugging (ลดความถี่)
+                        if len(new_bytes) > 20:  # เพิ่มเงื่อนไขเพื่อลด log
+                            self.log_message(f"Buffer data: {len(new_bytes)} bytes")
+                except Exception as e:
+                    self.log_message(f"Error reading buffer: {e}")
             
-            # ลองอ่านข้อมูลใหม่ (blocking read)
+            # ลองอ่านข้อมูลใหม่ (non-blocking read)
             try:
                 # ใช้ timeout สั้นๆ เพื่อไม่ให้ block นาน
                 original_timeout = ser.timeout
-                ser.timeout = 0.1  # 100ms timeout
-                new_bytes = ser.read(100)  # อ่านสูงสุด 100 bytes
+                ser.timeout = 0.01  # ลด timeout เป็น 10ms
+                new_bytes = ser.read(100)  # เพิ่มจำนวน bytes ที่อ่าน
                 if new_bytes:
                     self.read_buffer += new_bytes
                     
@@ -1476,8 +1646,34 @@ class RS232ClientGUI:
                     if self.realtime_monitoring_active:
                         self.add_realtime_data(new_bytes)
                     
-                    # Log raw data for debugging
-                    self.log_message(f"New data: {new_bytes.hex()} (ASCII: {new_bytes.decode('latin-1', errors='ignore')})")
+                    # ประมวลผลข้อมูลใหม่ทันที
+                    try:
+                        decoded_new = new_bytes.decode('latin-1', errors='ignore')
+                        lines = []
+                        for line in decoded_new.split('\r\n'):
+                            lines.extend(line.split('\n'))
+                        
+                        # ตรวจสอบข้อมูลใหม่
+                        for line in lines:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    parsed_value = self.parse_scale_data(line)
+                                    if parsed_value != "N/A":
+                                        # ตรวจสอบว่าน้ำหนักเป็น 0 หรือไม่
+                                        if parsed_value != "0" and parsed_value != "0.0":
+                                            self.last_weight = parsed_value
+                                            self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                            # ลดการ log เพื่อเพิ่มความเร็ว
+                                            # self.log_message(f"New weight from timeout read: {parsed_value}")
+                                except Exception as e:
+                                    continue
+                    except Exception as e:
+                        pass  # ไม่ log error สำหรับการประมวลผลข้อมูลใหม่
+                    
+                    # Log raw data for debugging (ลดความถี่)
+                    if len(new_bytes) > 5:
+                        self.log_message(f"New data: {len(new_bytes)} bytes")
                 ser.timeout = original_timeout
             except Exception as e:
                 # ไม่มีข้อมูลใหม่ ไม่เป็นไร
@@ -1485,50 +1681,101 @@ class RS232ClientGUI:
             
             # Process buffer for complete messages
             if self.read_buffer:
-                # ลอง decode ข้อมูลทั้งหมดใน buffer
                 try:
-                    decoded_message = self.read_buffer.decode('latin-1', errors='ignore').strip()
-                    self.log_message(f"Full buffer: {decoded_message}")
+                    decoded_message = self.read_buffer.decode('latin-1', errors='ignore')
                     
                     # แยกข้อมูลตามบรรทัด
-                    lines = decoded_message.split('\r\n') + decoded_message.split('\n')
-                    processed_lines = 0
+                    lines = []
+                    for line in decoded_message.split('\r\n'):
+                        lines.extend(line.split('\n'))
                     
-                    for line in lines:
+                    processed_lines = 0
+                    last_processed_index = 0
+                    
+                    for i, line in enumerate(lines):
                         line = line.strip()
                         if line:  # ถ้ามีข้อมูลในบรรทัด
-                            self.log_message(f"Processing line: '{line}'")
-                            parsed_value = self.parse_scale_data(line)
-                            if parsed_value != "N/A":
-                                self.last_weight = parsed_value
-                                self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
-                                self.log_message(f"Parsed weight: {parsed_value}")
-                                processed_lines += 1
+                            try:
+                                parsed_value = self.parse_scale_data(line)
+                                if parsed_value != "N/A":
+                                    # ตรวจสอบว่าค่าใหม่แตกต่างจากค่าเดิมหรือไม่
+                                    if parsed_value != self.last_weight:
+                                        self.last_weight = parsed_value
+                                        self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                        # ลดการ log เพื่อเพิ่มความเร็ว
+                                        # self.log_message(f"New weight: {parsed_value} (from: {line})")
+                                    processed_lines += 1
+                                    last_processed_index = i
+                            except Exception as e:
+                                self.log_message(f"Error parsing line '{line}': {e}")
                     
                     # ล้าง buffer เฉพาะบรรทัดที่ประมวลผลแล้ว
                     if processed_lines > 0:
-                        # หาตำแหน่งของบรรทัดสุดท้ายที่ประมวลผล
-                        lines = decoded_message.split('\r\n') + decoded_message.split('\n')
-                        processed_content = '\r\n'.join(lines[:processed_lines])
-                        if processed_content:
-                            # ลบข้อมูลที่ประมวลผลแล้วออกจาก buffer
-                            remaining_content = decoded_message[len(processed_content):].lstrip('\r\n')
-                            self.read_buffer = remaining_content.encode('latin-1', errors='ignore')
-                            self.log_message(f"Buffer cleared, remaining: {remaining_content}")
+                        try:
+                            # หาตำแหน่งของบรรทัดสุดท้ายที่ประมวลผล
+                            processed_content = '\r\n'.join(lines[:last_processed_index + 1])
+                            if processed_content:
+                                # ลบข้อมูลที่ประมวลผลแล้วออกจาก buffer
+                                remaining_content = decoded_message[len(processed_content):].lstrip('\r\n')
+                                self.read_buffer = remaining_content.encode('latin-1', errors='ignore')
+                                
+                                # ตรวจสอบว่ามีข้อมูลใหม่เข้ามาหรือไม่
+                                if len(self.read_buffer) > 0:
+                                    self.log_message(f"Buffer cleared, remaining: {len(self.read_buffer)} bytes")
+                        except Exception as e:
+                            self.log_message(f"Error clearing buffer: {e}")
+                            # ถ้าเกิดข้อผิดพลาด ให้ล้าง buffer ทั้งหมด
+                            self.read_buffer = b''
                     
-                    # ถ้า parse ไม่ได้ ให้เก็บข้อมูลไว้
-                    if len(self.read_buffer) > 1000:  # จำกัดขนาด buffer
+                    # ถ้า buffer ใหญ่เกินไป ให้ล้างบางส่วน
+                    if len(self.read_buffer) > 1500:
+                        # เก็บข้อมูลล่าสุด 500 bytes
                         self.read_buffer = self.read_buffer[-500:]
+                        self.log_message("Buffer trimmed due to size")
+                        
+                        # หลังจาก trim buffer แล้ว ให้ประมวลผลข้อมูลใหม่
+                        try:
+                            decoded_message = self.read_buffer.decode('latin-1', errors='ignore')
+                            lines = []
+                            for line in decoded_message.split('\r\n'):
+                                lines.extend(line.split('\n'))
+                            
+                            # ประมวลผลบรรทัดสุดท้ายเพื่อหาน้ำหนักล่าสุด
+                            for line in reversed(lines):
+                                line = line.strip()
+                                if line:
+                                    try:
+                                        parsed_value = self.parse_scale_data(line)
+                                        if parsed_value != "N/A":
+                                            # ตรวจสอบว่าน้ำหนักเป็น 0 หรือไม่
+                                            if parsed_value != "0" and parsed_value != "0.0":
+                                                self.last_weight = parsed_value
+                                                self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                                # ลดการ log เพื่อเพิ่มความเร็ว
+                                                # self.log_message(f"Updated weight after buffer trim: {parsed_value}")
+                                                break
+                                    except Exception as e:
+                                        continue
+                        except Exception as e:
+                            self.log_message(f"Error processing trimmed buffer: {e}")
                         
                 except Exception as e:
                     self.log_message(f"Buffer decode error: {e}")
-                    # ถ้า decode ไม่ได้ ให้เก็บข้อมูลไว้
-                    if len(self.read_buffer) > 1000:
-                        self.read_buffer = self.read_buffer[-500:]
+                    # ถ้า decode ไม่ได้ ให้ล้าง buffer
+                    self.read_buffer = b''
             
             return self.last_weight
         except Exception as e:
             self.log_message(f"Serial read error: {e}")
+            # ถ้าเกิดข้อผิดพลาด ให้รีเซ็ตการเชื่อมต่อ
+            try:
+                if ser and ser.is_open:
+                    ser.reset_input_buffer()
+                    ser.reset_output_buffer()
+                    self.read_buffer = b''
+                    self.log_message("Serial buffers reset due to error")
+            except Exception as reset_error:
+                self.log_message(f"Error resetting serial buffers: {reset_error}")
             return "Error"
     def start_client(self):
         """เริ่มต้น client"""
@@ -1594,6 +1841,8 @@ class RS232ClientGUI:
     def stop_client(self):
         """หยุด client"""
         try:
+            self.log_message("Stopping client...")
+            
             self.is_running = False
             self.is_connected = False
             
@@ -1601,23 +1850,103 @@ class RS232ClientGUI:
             if self.realtime_monitoring_active:
                 self.toggle_realtime_monitoring()
             
+            # ปิดการเชื่อมต่อ Serial
             if self.serial_connection and self.serial_connection.is_open:
-                self.serial_connection.close()
-                
-                if self.websocket and self.loop:
-                    try:
-                        asyncio.run_coroutine_threadsafe(self.websocket.close(), self.loop)
-                    except Exception as e:
-                        print(f"WebSocket close error: {e}")
+                try:
+                    self.serial_connection.close()
+                    self.log_message("Serial connection closed")
+                except Exception as e:
+                    self.log_message(f"Error closing serial connection: {e}")
             
+            # ปิด WebSocket
+            if self.websocket and self.loop:
+                try:
+                    # ส่ง task ไปยัง event loop เพื่อปิด WebSocket
+                    future = asyncio.run_coroutine_threadsafe(self.close_websocket(), self.loop)
+                    # รอให้ปิดเสร็จ (timeout 5 วินาที)
+                    future.result(timeout=5)
+                    self.log_message("WebSocket connection closed")
+                except Exception as e:
+                    self.log_message(f"WebSocket close error: {e}")
+            
+            # อัปเดต UI
             self.start_btn.config(state='normal')
             self.stop_btn.config(state='disabled')
             self.serial_status_label.config(text="🔴 Serial: Disconnected")
             self.server_status_label.config(text="🔴 Server: Disconnected")
             
-            self.log_message("Client stopped")
+            # ล้าง buffer
+            self.read_buffer = b''
+            
+            self.log_message("Client stopped successfully")
         except Exception as e:
             self.log_message(f"Stop client error: {e}")
+            # แม้เกิดข้อผิดพลาด ก็ต้องอัปเดตสถานะ
+            self.is_running = False
+            self.is_connected = False
+            self.start_btn.config(state='normal')
+            self.stop_btn.config(state='disabled')
+    
+    def load_additional_config(self):
+        """โหลด config เพิ่มเติมหลังจากสร้าง GUI แล้ว"""
+        try:
+            if hasattr(self, 'config_data'):
+                # โหลด branch configuration
+                if 'branch' in self.config_data:
+                    try:
+                        self.branch_var.set(self.config_data['branch'])
+                        self.log_message(f"Loaded branch: {self.config_data['branch']}")
+                    except Exception as e:
+                        self.log_message(f"Error loading branch config: {e}")
+                
+                # โหลด scale pattern configuration
+                if 'scale_pattern' in self.config_data:
+                    try:
+                        self.scale_pattern_var.set(self.config_data['scale_pattern'])
+                        self.log_message(f"Loaded scale pattern: {self.config_data['scale_pattern']}")
+                    except Exception as e:
+                        self.log_message(f"Error loading scale pattern config: {e}")
+                
+                # โหลด custom pattern 3 configuration
+                if 'custom_prefix' in self.config_data:
+                    try:
+                        self.custom_pattern_prefix_var.set(self.config_data['custom_prefix'])
+                    except Exception as e:
+                        self.log_message(f"Error loading custom prefix config: {e}")
+                        
+                if 'custom_regex' in self.config_data:
+                    try:
+                        self.custom_pattern_regex_var.set(self.config_data['custom_regex'])
+                    except Exception as e:
+                        self.log_message(f"Error loading custom regex config: {e}")
+                        
+                if 'custom_iszero' in self.config_data:
+                    try:
+                        self.custom_pattern_is_zero_var.set(self.config_data['custom_iszero'])
+                    except Exception as e:
+                        self.log_message(f"Error loading custom iszero config: {e}")
+                
+                self.log_message("Additional config loaded successfully")
+                
+                # อัปเดตการแสดงผล
+                try:
+                    self.update_branch_prefix_display()
+                    self.update_scale_pattern_info()
+                except Exception as e:
+                    self.log_message(f"Error updating displays: {e}")
+                
+        except Exception as e:
+            self.log_message(f"Error loading additional config: {e}")
+    
+    async def close_websocket(self):
+        """ปิด WebSocket connection อย่างปลอดภัย"""
+        try:
+            if self.websocket and not self.websocket.closed:
+                await self.websocket.close()
+                self.websocket = None
+        except Exception as e:
+            self.log_message(f"Error in close_websocket: {e}")
+            self.websocket = None
         
     def run_client_async(self):
         """รัน client ใน async loop"""
@@ -1630,6 +1959,9 @@ class RS232ClientGUI:
         
     async def client_main(self):
         """ฟังก์ชันหลักของ client"""
+        reconnect_delay = 5  # เริ่มต้นรอ 5 วินาที
+        max_reconnect_delay = 60  # สูงสุดรอ 60 วินาที
+        
         while self.is_running:
             try:
                 server_url = self.server_url_var.get()
@@ -1637,26 +1969,93 @@ class RS232ClientGUI:
                 
                 self.log_message(f"Connecting to server {server_url}")
                 
-                async with websockets.connect(server_url) as websocket:
-                    self.websocket = websocket
-                    self.is_connected = True
-                    self.server_status_label.config(text="🟢 Server: Connected")
-                    self.log_message("Connected to server")
-                    
+                # สร้าง WebSocket connection
+                websocket = await websockets.connect(server_url)
+                self.websocket = websocket
+                self.is_connected = True
+                self.server_status_label.config(text="🟢 Server: Connected")
+                self.log_message("Connected to server")
+                
+                # รีเซ็ต reconnect delay เมื่อเชื่อมต่อสำเร็จ
+                reconnect_delay = 5
+                
+                # ล้าง buffer เก่าเมื่อ reconnect เพื่อไม่ให้ส่งข้อมูลเก่า
+                if len(self.read_buffer) > 0:
+                    self.log_message("Clearing old buffer after reconnect")
+                    self.read_buffer = b''
+                
+                try:
                     # เริ่มการส่งข้อมูล
                     await self.send_weight_loop(client_id)
+                except websockets.exceptions.ConnectionClosed:
+                    self.log_message("WebSocket connection closed by server")
+                except websockets.exceptions.ConnectionClosedOK:
+                    self.log_message("WebSocket connection closed normally")
+                except Exception as e:
+                    self.log_message(f"Error in send_weight_loop: {e}")
+                finally:
+                    # ปิด WebSocket connection อย่างถูกต้อง
+                    try:
+                        await websocket.close()
+                        self.log_message("WebSocket connection closed properly")
+                    except Exception as e:
+                        self.log_message(f"Error closing websocket: {e}")
                     
+                    self.websocket = None
+                    self.is_connected = False
+                    self.server_status_label.config(text="🔴 Server: Disconnected")
+                    
+            except websockets.exceptions.InvalidURI:
+                self.log_message(f"Invalid server URL: {server_url}")
+                self.is_connected = False
+                self.server_status_label.config(text="🔴 Server: Invalid URL")
+                await asyncio.sleep(10)  # รอนานขึ้นสำหรับ URL ที่ผิด
+                continue
+                
             except Exception as e:
                 self.log_message(f"Connection error: {e}")
                 self.is_connected = False
                 self.server_status_label.config(text="🔴 Server: Disconnected")
-                await asyncio.sleep(5)
+            
+            # รอก่อน reconnect
+            if self.is_running:
+                self.log_message(f"Reconnecting in {reconnect_delay} seconds...")
+                await asyncio.sleep(reconnect_delay)
+                
+                # เพิ่ม delay แบบ exponential backoff
+                reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
                 
     async def send_weight_loop(self, client_id):
         """ลูปสำหรับส่งข้อมูลน้ำหนัก"""
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+        
         while self.is_running and self.is_connected:
             try:
+                # ตรวจสอบว่า WebSocket ยังเชื่อมต่ออยู่หรือไม่
+                if not self.websocket or self.websocket.closed:
+                    self.log_message("WebSocket connection lost, breaking loop")
+                    break
+                
                 weight = self.read_weight_from_rs232()
+                
+                # ตรวจสอบว่าค่าน้ำหนักถูกต้องหรือไม่
+                if weight == "Error" or weight == "N/A":
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        self.log_message(f"Too many consecutive errors ({consecutive_errors}), reconnecting...")
+                        break
+                    await asyncio.sleep(1.0)  # รอเวลานานขึ้นเมื่อเกิด error
+                    continue
+                
+                # ตรวจสอบว่าน้ำหนักเป็น 0 หรือไม่ และไม่ส่งซ้ำ
+                if weight == "0" or weight == "0.0":
+                    # ถ้าน้ำหนักเป็น 0 ให้รอข้อมูลใหม่
+                    await asyncio.sleep(0.1)  # ลด delay จาก 0.5 เป็น 0.1 วินาที
+                    continue
+                
+                # รีเซ็ต error counter เมื่อสำเร็จ
+                consecutive_errors = 0
                 
                 # ส่งข้อมูลเพิ่มเติมรวมถึง branch prefix และ scale pattern
                 message = {
@@ -1667,12 +2066,46 @@ class RS232ClientGUI:
                     "branch_prefix": self.get_branch_prefix(self.branch_var.get()),
                     "scale_pattern": self.scale_pattern_var.get()
                 }
-                await self.websocket.send(json.dumps(message))
-                self.log_message(f"Sent weight: {weight} (Branch: {self.branch_var.get()}, Pattern: {self.scale_pattern_var.get()})")
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                self.log_message(f"Error sending data: {e}")
+                
+                try:
+                    # ตรวจสอบ WebSocket state ก่อนส่ง
+                    if self.websocket and not self.websocket.closed:
+                        await self.websocket.send(json.dumps(message))
+                        self.log_message(f"Sent weight: {weight} (Branch: {self.branch_var.get()}, Pattern: {self.scale_pattern_var.get()})")
+                    else:
+                        self.log_message("WebSocket not available for sending")
+                        break
+                        
+                except websockets.exceptions.ConnectionClosed:
+                    self.log_message("WebSocket connection closed during send")
+                    break
+                except websockets.exceptions.ConnectionClosedOK:
+                    self.log_message("WebSocket connection closed normally during send")
+                    break
+                except Exception as send_error:
+                    self.log_message(f"Error sending to websocket: {send_error}")
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        self.log_message(f"Too many send errors ({consecutive_errors}), reconnecting...")
+                        break
+                
+                await asyncio.sleep(0.1)  # ลด delay จาก 0.5 เป็น 0.1 วินาที
+                
+            except websockets.exceptions.ConnectionClosed:
+                self.log_message("WebSocket connection closed in main loop")
                 break
+            except websockets.exceptions.ConnectionClosedOK:
+                self.log_message("WebSocket connection closed normally in main loop")
+                break
+            except Exception as e:
+                consecutive_errors += 1
+                self.log_message(f"Error in send_weight_loop: {e}")
+                
+                if consecutive_errors >= max_consecutive_errors:
+                    self.log_message(f"Too many consecutive errors ({consecutive_errors}), stopping client...")
+                    break
+                
+                await asyncio.sleep(1.0)  # รอเวลานานขึ้นเมื่อเกิด error
 
         
     def test_raw_data_display(self):
@@ -1756,6 +2189,8 @@ class RS232ClientGUI:
     def on_closing(self):
         """จัดการเมื่อปิดโปรแกรม"""
         try:
+            self.log_message("Shutting down application...")
+            
             # หยุด real-time monitoring
             if self.realtime_monitoring_active:
                 self.toggle_realtime_monitoring()
@@ -1764,11 +2199,129 @@ class RS232ClientGUI:
             if self.is_running:
                 self.stop_client()
             
+            # หยุด tray icon
+            if self.tray_icon:
+                try:
+                    self.tray_icon.stop()
+                except Exception as e:
+                    print(f"Error stopping tray icon: {e}")
+            
+            # ปิดการเชื่อมต่อ Serial
+            if self.serial_connection and self.serial_connection.is_open:
+                try:
+                    self.serial_connection.close()
+                    self.log_message("Serial connection closed")
+                except Exception as e:
+                    print(f"Error closing serial connection: {e}")
+            
+            # ล้าง buffer
+            self.read_buffer = b''
+            
+            self.log_message("Application shutdown complete")
+            
             # ปิดโปรแกรม
             self.root.destroy()
         except Exception as e:
             print(f"Closing error: {e}")
-            self.root.destroy()
+            try:
+                self.root.destroy()
+            except:
+                pass
+
+    def open_frontend(self):
+        """เปิดหน้าเว็บ Frontend"""
+        try:
+            self.log_message(f"Opening frontend: {FRONTEND_URL}")
+            webbrowser.open(FRONTEND_URL)
+            messagebox.showinfo("Frontend", f"Opening frontend in browser:\n{FRONTEND_URL}")
+        except Exception as e:
+            self.log_message(f"Error opening frontend: {e}")
+            messagebox.showerror("Error", f"Failed to open frontend: {e}")
+    
+    def minimize_to_tray(self):
+        """ซ่อนโปรแกรมลงใน Tray"""
+        try:
+            if not self.is_minimized_to_tray:
+                # สร้าง icon สำหรับ tray
+                self.create_tray_icon()
+                
+                # ซ่อนหน้าต่างหลัก
+                self.root.withdraw()
+                self.is_minimized_to_tray = True
+                self.tray_btn.config(text="📌 Show Window")
+                
+                self.log_message("Application minimized to system tray")
+                messagebox.showinfo("Tray", "Application minimized to system tray.\nRight-click tray icon to show window.")
+            else:
+                # แสดงหน้าต่างหลัก
+                self.show_from_tray()
+                
+        except Exception as e:
+            self.log_message(f"Error minimizing to tray: {e}")
+            messagebox.showerror("Error", f"Failed to minimize to tray: {e}")
+    
+    def create_tray_icon(self):
+        """สร้าง icon สำหรับ system tray"""
+        try:
+            # สร้าง icon ง่ายๆ จากข้อความ
+            icon_image = Image.new('RGB', (64, 64), color='blue')
+            
+            # สร้าง menu สำหรับ tray
+            menu = (
+                item('Show Window', self.show_from_tray),
+                item('Open Frontend', self.open_frontend),
+                item('Start Client', self.start_client),
+                item('Stop Client', self.stop_client),
+                item('Exit', self.quit_application)
+            )
+            
+            # สร้าง tray icon
+            self.tray_icon = pystray.Icon("RS232 Scale Client", icon_image, "RS232 Scale Client", menu)
+            
+            # เริ่ม tray icon ใน thread แยก
+            tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
+            tray_thread.start()
+            
+        except Exception as e:
+            self.log_message(f"Error creating tray icon: {e}")
+    
+    def show_from_tray(self):
+        """แสดงหน้าต่างหลักจาก tray"""
+        try:
+            if self.is_minimized_to_tray:
+                self.root.deiconify()
+                self.root.lift()
+                self.root.focus_force()
+                self.is_minimized_to_tray = False
+                self.tray_btn.config(text="📌 Hide to Tray")
+                
+                # หยุด tray icon
+                if self.tray_icon:
+                    self.tray_icon.stop()
+                    self.tray_icon = None
+                
+                self.log_message("Application restored from system tray")
+        except Exception as e:
+            self.log_message(f"Error showing from tray: {e}")
+    
+    def quit_application(self):
+        """ปิดโปรแกรม"""
+        try:
+            # หยุด tray icon
+            if self.tray_icon:
+                try:
+                    self.tray_icon.stop()
+                except Exception as e:
+                    print(f"Error stopping tray icon: {e}")
+            
+            # ปิดโปรแกรม
+            self.on_closing()
+        except Exception as e:
+            self.log_message(f"Error quitting application: {e}")
+            try:
+                self.root.destroy()
+            except:
+                pass
 
     def show_main_help(self):
         """แสดงหน้าต่าง Help หลัก"""
@@ -1807,6 +2360,7 @@ class RS232ClientGUI:
    • Stop Bits: บิตหยุด (1, 1.5, 2)
    • Byte Size: ขนาดข้อมูล (5, 6, 7, 8)
    • Timeout: เวลารอข้อมูล (วินาที)
+   • Sensitivity: ความไวในการอ่านน้ำหนัก (kg)
 
 2️⃣ การตั้งค่า Scale Pattern:
    • เลือก Pattern ที่ตรงกับรุ่นตาชั่ง
@@ -1838,6 +2392,8 @@ class RS232ClientGUI:
 • Save: บันทึกการตั้งค่าทั้งหมด
 • Start: เริ่มต้นการทำงาน Client
 • Stop: หยุดการทำงาน Client
+• 🌐 OPEN FRONTEND: เปิดหน้าเว็บ Frontend
+• 📌 Hide to Tray: ซ่อนโปรแกรมลงใน System Tray
 • ❓ Help: แสดงคู่มือการใช้งาน
 
 🔍 Real-time RS232 Data Monitoring:
@@ -1881,12 +2437,19 @@ class RS232ClientGUI:
 • ใช้ข้อมูล real-time เพื่อปรับแต่ง Scale Pattern
 • บันทึกการตั้งค่าหลังจากทดสอบแล้ว
 • ใช้ Custom Pattern 3 สำหรับตาชั่งที่ไม่รองรับ
+• ใช้ Sensitivity เพื่อปรับความไวในการอ่านน้ำหนัก
 
 🔗 การเชื่อมต่อ:
 • Serial Port → ตาชั่ง
 • WebSocket → Server
 • ข้อมูลน้ำหนักจะถูกส่งไปยัง Server ทุก 0.5 วินาที
-• Real-time monitoring อัปเดตทุก 100ms"""
+• Real-time monitoring อัปเดตทุก 100ms
+
+🌐 System Tray:
+• คลิกขวาที่ tray icon เพื่อดูเมนู
+• เลือก "Show Window" เพื่อแสดงหน้าต่างหลัก
+• เลือก "Open Frontend" เพื่อเปิดหน้าเว็บ
+• เลือก "Exit" เพื่อปิดโปรแกรม"""
         
         help_text.insert(tk.END, help_content)
         help_text.config(state=tk.DISABLED)
