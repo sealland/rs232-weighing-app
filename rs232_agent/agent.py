@@ -59,7 +59,15 @@ async def broadcast_weight_data():
     """ส่งข้อมูลน้ำหนักไปยัง web clients"""
     if CONNECTED_CLIENTS:
         # สร้างข้อมูลที่จะส่งไปยัง web clients
+        # ใช้ข้อมูลน้ำหนักล่าสุดจาก scale แรกที่เชื่อมต่อ
+        latest_weight = 0
+        if WEIGHT_DATA:
+            # ใช้ข้อมูลจาก scale แรก (หรือ scale ที่อัปเดตล่าสุด)
+            first_scale_data = next(iter(WEIGHT_DATA.values()))
+            latest_weight = first_scale_data.get("weight", 0)
+        
         weight_summary = {
+            "weight": latest_weight,  # เพิ่ม property 'weight' ที่ frontend คาดหวัง
             "timestamp": time.time(),
             "scales": dict(WEIGHT_DATA)
         }
