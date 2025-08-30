@@ -19,11 +19,11 @@ CLIENT_ID = "scale_001"
 
 # Serial Configuration
 DEFAULT_SERIAL_PORT = "COM1"
-DEFAULT_BAUD_RATE = 1200
-DEFAULT_PARITY = "N"
+DEFAULT_BAUD_RATE = 9600  # เปลี่ยนจาก 1200 เป็น 9600 ตาม HyperTerminal
+DEFAULT_PARITY = "E"      # เปลี่ยนจาก N เป็น E ตาม HyperTerminal
 DEFAULT_STOP_BITS = "1"
-DEFAULT_BYTE_SIZE = "8"
-DEFAULT_READ_TIMEOUT = 0.05
+DEFAULT_BYTE_SIZE = "7"   # เปลี่ยนจาก 8 เป็น 7 ตาม HyperTerminal
+DEFAULT_READ_TIMEOUT = 1.0  # เพิ่มจาก 0.05 เป็น 1.0 วินาที
 
 # Branch Configuration
 BRANCH_CONFIG = {
@@ -37,8 +37,12 @@ BRANCH_CONFIG = {
     'สาขาลพบุรี': 'DYNAMIC'  # จะใช้ปี พ.ศ. 2 ตัวสุดท้าย
 }
 
+
 # Scale Pattern Configuration - รองรับหลายรุ่น/ยี่ห้อ
 SCALE_PATTERNS = {
+    'Raw Data (No Parse)': [
+        ("RAW", r".*", False),  # รับข้อมูลทั้งหมดโดยไม่ parse
+    ],
     'Default': [
         ("1CH", r"1CH\s+(0{3,})", True),
         (" H ", r"\sH\s+(0{3,})", True),
@@ -51,6 +55,10 @@ SCALE_PATTERNS = {
         ("CAS", r"CAS\s+(0{3,})", True),
         ("ST", r"ST\s+(\d+)", False),
         ("ST", r"ST\s+(0{3,})", True),
+    ],
+    'ST,GS Format': [
+        ("ST,GS", r"ST,GS,\+([0-9]+\.?[0-9]*)kg", False),  # น้ำหนักจริง เช่น +123.4kg
+        ("ST,GS", r"ST,GS,\+0{3,}\.?0*kg", True),          # น้ำหนัก 0 เช่น +00000.0kg
     ],
     'Mettler Toledo': [
         ("MT", r"MT\s+(\d+)", False),
@@ -93,7 +101,7 @@ class RS232ClientGUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(f"RS232 Scale Client - {CLIENT_ID}")
-        self.root.geometry("900x750")  # เพิ่มความสูงเพื่อรองรับ Custom Pattern 3
+        self.root.geometry("1000x780")  # เพิ่มขนาดเพื่อรองรับ Real-time monitoring
         self.root.configure(bg='#f0f0f0')
         
         # Client variables
@@ -118,15 +126,21 @@ class RS232ClientGUI:
         self.server_url_var = tk.StringVar(value=SERVER_WEBSOCKET_URL)
         self.client_id_var = tk.StringVar(value=CLIENT_ID)
         self.branch_var = tk.StringVar(value='สำนักงานใหญ่ P8')  # Default branch
-        self.scale_pattern_var = tk.StringVar(value='Default')  # Default scale pattern
-        
+        self.scale_pattern_var = tk.StringVar(value='Raw Data (No Parse)')  # เปลี่ยนเป็น Raw Data
         # Custom Pattern 3 variables
         self.custom_pattern_prefix_var = tk.StringVar(value="CUSTOM3")
         self.custom_pattern_regex_var = tk.StringVar(value=r"CUSTOM3\s+(\d+)")
         self.custom_pattern_is_zero_var = tk.BooleanVar(value=False)
-        
+
+        # สร้าง UI ก่อน
         self.setup_ui()
         self.update_available_ports()
+        
+        # Log current configuration for debugging หลังจากสร้าง UI แล้ว
+        self.log_message(f"Default config: {self.serial_config['port']}, {self.serial_config['baudrate']}, {self.get_parity_key()}, {self.get_stopbits_key()}, {self.get_bytesize_key()}")
+        
+        # ตรวจสอบสถานะ Serial port หลังจากเริ่มต้น
+        self.root.after(1000, self.test_connection_status)  # ตรวจสอบหลังจาก 1 วินาที
         
     def setup_ui(self):
         """สร้าง UI"""
@@ -174,6 +188,7 @@ class RS232ClientGUI:
                                      values=['1200', '2400', '4800', '9600', '19200', '38400', '57600', '115200'],
                                      width=12, font=('Tahoma', 8))
         baudrate_combo.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=3)
+        baudrate_combo.set('9600')  # Set default to 9600
         
         # Parity
         ttk.Label(config_frame, text="Parity:", font=('Tahoma', 8)).grid(row=2, column=0, sticky=tk.W, padx=(0, 8))
@@ -181,6 +196,7 @@ class RS232ClientGUI:
                                    values=['N', 'E', 'O', 'M', 'S'],
                                    width=12, font=('Tahoma', 8))
         parity_combo.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=3)
+        parity_combo.set('E')  # Set default to E
         
         # Stop bits
         ttk.Label(config_frame, text="Stop Bits:", font=('Tahoma', 8)).grid(row=3, column=0, sticky=tk.W, padx=(0, 8))
@@ -195,6 +211,7 @@ class RS232ClientGUI:
                                      values=['5', '6', '7', '8'],
                                      width=12, font=('Tahoma', 8))
         bytesize_combo.grid(row=4, column=1, sticky=(tk.W, tk.E), pady=3)
+        bytesize_combo.set('7')  # Set default to 7
         
         # Timeout
         ttk.Label(config_frame, text="Timeout (sec):", font=('Tahoma', 8)).grid(row=5, column=0, sticky=tk.W, padx=(0, 8))
@@ -254,7 +271,7 @@ class RS232ClientGUI:
         help_btn = ttk.Button(custom_buttons_frame, text="❓ Help", 
                              command=self.show_help, width=8)
         help_btn.grid(row=0, column=1)
-        
+
         # Branch Configuration Frame
         branch_frame = ttk.LabelFrame(left_panel, text="Branch Configuration", padding="8")
         branch_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 8))
@@ -292,7 +309,7 @@ class RS232ClientGUI:
         control_frame = ttk.Frame(left_panel)
         control_frame.grid(row=5, column=0, columnspan=2, pady=(0, 8))
         
-        self.test_btn = ttk.Button(control_frame, text="Test", command=self.test_serial_connection, width=8)
+        self.test_btn = ttk.Button(control_frame, text="�� Test All", command=self.test_all_functions, width=10)
         self.test_btn.grid(row=0, column=0, padx=(0, 5))
         
         self.save_btn = ttk.Button(control_frame, text="Save", command=self.save_configuration, width=8)
@@ -307,7 +324,13 @@ class RS232ClientGUI:
         # Help Button
         help_btn = ttk.Button(control_frame, text="❓ Help", command=self.show_main_help, width=8)
         help_btn.grid(row=0, column=4, padx=(5, 0))
+
+        debug_btn = ttk.Button(control_frame, text="🐛 Debug", command=self.debug_serial_reading, width=8)
+        debug_btn.grid(row=0, column=5, padx=(5, 0))
         
+        pattern_test_btn = ttk.Button(control_frame, text="🔍 Test Pattern", command=self.test_pattern_parsing, width=10)
+        pattern_test_btn.grid(row=0, column=6, padx=(5, 0))
+
         # Config Path Note
         config_abs_path = os.path.abspath(CLIENT_CONFIG_FILE)
         config_note_label = ttk.Label(left_panel, 
@@ -321,12 +344,13 @@ class RS232ClientGUI:
         right_panel.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(5, 0))
         right_panel.columnconfigure(0, weight=1)
         right_panel.rowconfigure(1, weight=1)
+        right_panel.rowconfigure(2, weight=1)  # เพิ่ม weight สำหรับ real-time frame
         main_frame.rowconfigure(1, weight=1)
         main_frame.columnconfigure(1, weight=1)
         
         # Status Frame
         status_frame = ttk.LabelFrame(right_panel, text="Status & Monitoring", padding="8")
-        status_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        status_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 8))
         status_frame.columnconfigure(0, weight=1)
         status_frame.rowconfigure(1, weight=1)
         
@@ -346,7 +370,7 @@ class RS232ClientGUI:
         
         # Current weight
         self.weight_label = ttk.Label(status_indicators_frame, text="⚖️ Weight: 0 kg", 
-                                     font=('Tahoma', 11, 'bold'))
+                                    font=('Tahoma', 11, 'bold'))
         self.weight_label.grid(row=0, column=2)
         
         # Log area
@@ -364,9 +388,70 @@ class RS232ClientGUI:
         clear_log_btn = ttk.Button(log_frame, text="Clear Log", command=self.clear_log, width=10)
         clear_log_btn.grid(row=2, column=0, pady=(3, 0))
         
+        # Real-time RS232 Data Display Frame
+        realtime_frame = ttk.LabelFrame(status_frame, text="🔍 Real-time RS232 Data", padding="8")
+        realtime_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(8, 0))
+        realtime_frame.columnconfigure(0, weight=1)
+        realtime_frame.rowconfigure(1, weight=1)
+        realtime_frame.rowconfigure(2, weight=0)  # info label ไม่ขยาย
+        
+        # Real-time data controls
+        realtime_controls_frame = ttk.Frame(realtime_frame)
+        realtime_controls_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+        
+        # Start/Stop real-time monitoring button
+        self.realtime_monitor_var = tk.BooleanVar(value=False)
+        self.realtime_monitor_btn = ttk.Button(realtime_controls_frame, text="▶️ Start Monitoring", 
+                                             command=self.toggle_realtime_monitoring, width=10)
+        self.realtime_monitor_btn.grid(row=0, column=0, padx=(0, 3))
+        
+        # Clear real-time data button
+        clear_realtime_btn = ttk.Button(realtime_controls_frame, text="🗑️ Clear Data", 
+                                      command=self.clear_realtime_data, width=12)
+        clear_realtime_btn.grid(row=0, column=1, padx=(0, 5))
+        
+        # Auto-scroll checkbox
+        self.auto_scroll_var = tk.BooleanVar(value=True)
+        auto_scroll_check = ttk.Checkbutton(realtime_controls_frame, text="Auto-scroll", 
+                                           variable=self.auto_scroll_var)
+        auto_scroll_check.grid(row=0, column=2, padx=(0, 5))
+        
+        # Max lines display
+        ttk.Label(realtime_controls_frame, text="Max lines:", font=('Tahoma', 7)).grid(row=0, column=3, padx=(0, 2))
+        self.max_lines_var = tk.StringVar(value="100")
+        max_lines_spinbox = ttk.Spinbox(realtime_controls_frame, from_=10, to=1000, 
+                                       textvariable=self.max_lines_var, width=8, font=('Tahoma', 7))
+        max_lines_spinbox.grid(row=0, column=4, padx=(0, 5))
+        
+        # Export button
+        export_btn = ttk.Button(realtime_controls_frame, text="📁 Export", 
+                               command=self.export_realtime_data, width=10)
+        export_btn.grid(row=0, column=5)
+        
+        # Bind events
+        max_lines_spinbox.bind('<KeyRelease>', self.on_max_lines_change)
+        max_lines_spinbox.bind('<<Increment>>', self.on_max_lines_change)
+        max_lines_spinbox.bind('<<Decrement>>', self.on_max_lines_change)
+        auto_scroll_check.bind('<Button-1>', self.on_auto_scroll_change)
+        
+        # Real-time data display
+        self.realtime_text = scrolledtext.ScrolledText(realtime_frame, height=23, width=50, 
+                                                     font=('Consolas', 8), bg='#1e1e1e', fg='#00ff00')
+        self.realtime_text.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Real-time data info
+        self.realtime_info_label = ttk.Label(realtime_frame, text="📊 Ready to monitor RS232 data...", 
+                                           font=('Tahoma', 7), foreground='gray')
+        self.realtime_info_label.grid(row=2, column=0, sticky=tk.W, pady=(3, 0))
+        
         # Update displays
         self.update_branch_prefix_display()
         self.update_scale_pattern_info()
+        
+        # Real-time monitoring variables
+        self.realtime_data_buffer = []
+        self.realtime_monitoring_active = False
+        self.realtime_update_timer = None
         
     def show_help(self):
         """แสดงหน้าต่าง Help"""
@@ -559,6 +644,255 @@ class RS232ClientGUI:
             self.log_text.delete(1.0, tk.END)
         except Exception as e:
             print(f"Clear log error: {e}")
+    
+    def toggle_realtime_monitoring(self):
+        """เปิด/ปิดการ monitor ข้อมูล real-time"""
+        try:
+            if not self.realtime_monitoring_active:
+                # ตรวจสอบการเชื่อมต่อ Serial ก่อน
+                ser = self.get_serial_connection()
+                if not ser:
+                    messagebox.showwarning("Warning", "Serial connection not available!\nPlease check your connection first.")
+                    return
+                
+                # เริ่มการ monitor
+                self.realtime_monitoring_active = True
+                self.realtime_monitor_var.set(True)
+                self.realtime_monitor_btn.config(text="⏸️ Stop Monitoring")
+                self.realtime_info_label.config(text="📊 Monitoring RS232 data in real-time...", foreground='green')
+                self.log_message("Real-time monitoring started")
+                
+                # เริ่ม timer สำหรับอ่านข้อมูลและอัปเดตการแสดงผล
+                self.start_realtime_reading()
+            else:
+                # หยุดการ monitor
+                self.realtime_monitoring_active = False
+                self.realtime_monitor_var.set(False)
+                self.realtime_monitor_btn.config(text="▶️ Start Monitoring")
+                self.realtime_info_label.config(text="📊 Real-time monitoring stopped", foreground='gray')
+                self.log_message("Real-time monitoring stopped")
+                
+                # หยุด timer
+                if self.realtime_update_timer:
+                    self.root.after_cancel(self.realtime_update_timer)
+                    self.realtime_update_timer = None
+        except Exception as e:
+            self.log_message(f"Toggle real-time monitoring error: {e}")
+
+    def start_realtime_reading(self):
+        """เริ่มการอ่านข้อมูล real-time"""
+        try:
+            if not self.realtime_monitoring_active:
+                return
+                
+            ser = self.get_serial_connection()
+            if ser:
+                # อ่านข้อมูลที่มีอยู่ใน buffer
+                if ser.in_waiting > 0:
+                    new_bytes = ser.read(ser.in_waiting)
+                    if new_bytes:
+                        self.add_realtime_data(new_bytes)
+                        # ลบการแสดง Hex และ ASCII
+                        self.log_message(f"Real-time data: {new_bytes.decode('latin-1', errors='ignore')}")
+                
+                # ลองอ่านข้อมูลใหม่
+                try:
+                    original_timeout = ser.timeout
+                    ser.timeout = 0.1  # 100ms timeout
+                    new_bytes = ser.read(100)
+                    if new_bytes:
+                        self.add_realtime_data(new_bytes)
+                        # ลบการแสดง Hex และ ASCII
+                        self.log_message(f"New real-time data: {new_bytes.decode('latin-1', errors='ignore')}")
+                    ser.timeout = original_timeout
+                except Exception as e:
+                    # ไม่มีข้อมูลใหม่ ไม่เป็นไร
+                    pass
+            
+            # ตั้งเวลาเรียกฟังก์ชันนี้อีกครั้ง (ทุก 200ms)
+            self.realtime_update_timer = self.root.after(200, self.start_realtime_reading)
+            
+        except Exception as e:
+            self.log_message(f"Real-time reading error: {e}")
+            # ตั้งเวลาเรียกฟังก์ชันนี้อีกครั้งแม้เกิดข้อผิดพลาด
+            self.realtime_update_timer = self.root.after(200, self.start_realtime_reading)
+
+        
+    def clear_realtime_data(self):
+        """ล้างข้อมูล real-time"""
+        try:
+            self.realtime_text.delete(1.0, tk.END)
+            self.realtime_data_buffer.clear()
+            self.realtime_info_label.config(text="📊 Real-time data cleared", foreground='gray')
+            self.log_message("Real-time data cleared")
+        except Exception as e:
+            self.log_message(f"Clear real-time data error: {e}")
+    
+    def update_realtime_display(self):
+        """อัปเดตการแสดงข้อมูล real-time"""
+        try:
+            if not self.realtime_monitoring_active:
+                return
+            
+            # อัปเดตการแสดงผลข้อมูลที่มีอยู่แล้ว
+            if self.realtime_data_buffer:
+                self.update_realtime_text()
+                
+                # อัปเดตข้อมูลสถิติ
+                total_bytes = sum(entry['length'] for entry in self.realtime_data_buffer)
+                self.realtime_info_label.config(
+                    text=f"📊 Monitoring: {len(self.realtime_data_buffer)} packets, {total_bytes} bytes received",
+                    foreground='green'
+                )
+            
+            # ตั้งเวลาเรียกฟังก์ชันนี้อีกครั้ง (ทุก 200ms)
+            self.realtime_update_timer = self.root.after(200, self.update_realtime_display)
+            
+        except Exception as e:
+            self.log_message(f"Update real-time display error: {e}")
+            # ตั้งเวลาเรียกฟังก์ชันนี้อีกครั้งแม้เกิดข้อผิดพลาด
+            self.realtime_update_timer = self.root.after(200, self.update_realtime_display)
+    
+    def update_realtime_text(self):
+        """อัปเดตข้อความใน real-time display"""
+        try:
+            self.realtime_text.delete(1.0, tk.END)
+            
+            if not self.realtime_data_buffer:
+                self.realtime_text.insert(tk.END, "No data received yet...\n")
+                return
+            
+            # แสดงข้อมูลล่าสุดก่อน (reverse order)
+            for entry in reversed(self.realtime_data_buffer):
+                timestamp = entry['timestamp']
+                ascii_data = entry['ascii']
+                length = entry['length']
+                
+                # สร้างบรรทัดข้อมูล - ลบ HEX และ DEC
+                line = f"[{timestamp}] ({length} bytes)\n"
+                line += f"ASCII: {ascii_data}\n"
+                line += "-" * 50 + "\n"
+                
+                self.realtime_text.insert(tk.END, line)
+            
+            # Auto-scroll ถ้าเปิดใช้งาน
+            if self.auto_scroll_var.get():
+                self.realtime_text.see(tk.END)
+                
+        except Exception as e:
+            self.log_message(f"Update real-time text error: {e}")
+
+    
+    def add_realtime_data(self, data_bytes):
+        """เพิ่มข้อมูลลงใน real-time buffer (เรียกจากฟังก์ชันอื่น)"""
+        try:
+            if not self.realtime_monitoring_active:
+                return
+                
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            
+            # แปลงข้อมูลเป็นรูปแบบที่อ่านได้
+            hex_data = data_bytes.hex(' ').upper()
+            ascii_data = ''.join([chr(b) if 32 <= b <= 126 else '.' for b in data_bytes])
+            decimal_data = ' '.join([str(b) for b in data_bytes])
+            
+            # สร้างข้อมูลสำหรับแสดง
+            data_entry = {
+                'timestamp': timestamp,
+                'hex': hex_data,
+                'ascii': ascii_data,
+                'decimal': decimal_data,
+                'length': len(data_bytes)
+            }
+            
+            # เพิ่มข้อมูลลงใน buffer
+            self.realtime_data_buffer.append(data_entry)
+            
+            # จำกัดจำนวนบรรทัด
+            max_lines = int(self.max_lines_var.get())
+            if len(self.realtime_data_buffer) > max_lines:
+                self.realtime_data_buffer = self.realtime_data_buffer[-max_lines:]
+            
+            # อัปเดตการแสดงผลทันที
+            self.update_realtime_text()
+            
+            # อัปเดตข้อมูลสถิติ
+            total_bytes = sum(entry['length'] for entry in self.realtime_data_buffer)
+            self.realtime_info_label.config(
+                text=f"📊 Monitoring: {len(self.realtime_data_buffer)} packets, {total_bytes} bytes received",
+                foreground='green'
+            )
+            
+            # ลอง parse ข้อมูลและอัปเดต weight label
+            try:
+                decoded = data_bytes.decode('latin-1', errors='ignore').strip()
+                if decoded:
+                    parsed_value = self.parse_scale_data(decoded)
+                    if parsed_value != "N/A":
+                        self.last_weight = parsed_value
+                        self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+            except Exception as e:
+                # ไม่เป็นไรถ้า parse ไม่ได้
+                pass
+                
+        except Exception as e:
+            self.log_message(f"Add real-time data error: {e}")
+    
+    def on_max_lines_change(self, event=None):
+        """เมื่อมีการเปลี่ยนแปลงจำนวนบรรทัดสูงสุด"""
+        try:
+            max_lines = int(self.max_lines_var.get())
+            if len(self.realtime_data_buffer) > max_lines:
+                self.realtime_data_buffer = self.realtime_data_buffer[-max_lines:]
+                self.update_realtime_text()
+            self.log_message(f"Max lines changed to: {max_lines}")
+        except ValueError:
+            self.log_message("Invalid max lines value")
+        except Exception as e:
+            self.log_message(f"Max lines change error: {e}")
+    
+    def on_auto_scroll_change(self, event=None):
+        """เมื่อมีการเปลี่ยนแปลงการตั้งค่า auto-scroll"""
+        try:
+            auto_scroll = self.auto_scroll_var.get()
+            if auto_scroll and self.realtime_data_buffer:
+                self.realtime_text.see(tk.END)
+            self.log_message(f"Auto-scroll {'enabled' if auto_scroll else 'disabled'}")
+        except Exception as e:
+            self.log_message(f"Auto-scroll change error: {e}")
+    
+    def export_realtime_data(self):
+        """ส่งออกข้อมูล real-time เป็นไฟล์"""
+        try:
+            if not self.realtime_data_buffer:
+                messagebox.showwarning("Warning", "No real-time data to export!")
+                return
+            
+            from tkinter import filedialog
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+                title="Export Real-time Data"
+            )
+            
+            if filename:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write("Real-time RS232 Data Export\n")
+                    f.write("=" * 50 + "\n\n")
+                    
+                    for entry in self.realtime_data_buffer:
+                        f.write(f"[{entry['timestamp']}] ({entry['length']} bytes)\n")
+                        f.write(f"HEX: {entry['hex']}\n")
+                        f.write(f"ASCII: {entry['ascii']}\n")
+                        f.write(f"DEC: {entry['decimal']}\n")
+                        f.write("-" * 50 + "\n")
+                
+                self.log_message(f"Real-time data exported to: {filename}")
+                messagebox.showinfo("Success", f"Real-time data exported successfully!\n\nFile: {filename}")
+                
+        except Exception as e:
+            self.log_message(f"Export real-time data error: {e}")
+            messagebox.showerror("Error", f"Failed to export real-time data: {e}")
         
     def check_ports(self):
         """ตรวจสอบ port ทั้งหมด"""
@@ -748,20 +1082,32 @@ class RS232ClientGUI:
             }
             
             self.log_message(f"Testing connection to {test_config['port']}...")
+            self.log_message(f"Config: {test_config['port']}, {test_config['baudrate']}, {self.parity_var.get()}, {self.stopbits_var.get()}, {self.bytesize_var.get()}")
             
             with serial.Serial(**test_config) as test_ser:
                 if test_ser.is_open:
                     self.log_message("Serial connection test successful!")
-                    messagebox.showinfo("Success", "Serial connection test successful!")
+                    self.serial_status_label.config(text="🟢 Serial: Test OK")
+                    
+                    # แนะนำให้เปิด real-time monitoring
+                    result = messagebox.askyesno("Test Successful", 
+                                               "Serial connection test successful!\n\n"
+                                               "Would you like to start real-time monitoring\n"
+                                               "to see the data from the scale?")
+                    if result:
+                        self.toggle_realtime_monitoring()
                 else:
                     self.log_message("Serial connection test failed!")
+                    self.serial_status_label.config(text="🔴 Serial: Test Failed")
                     messagebox.showerror("Error", "Serial connection test failed!")
                     
         except serial.SerialException as e:
             self.log_message(f"Serial connection test error: {e}")
+            self.serial_status_label.config(text="🔴 Serial: Error")
             messagebox.showerror("Error", f"Serial connection test failed: {e}")
         except PermissionError as e:
             self.log_message(f"Permission Error: {e}")
+            self.serial_status_label.config(text="🔴 Serial: Permission Denied")
             messagebox.showerror("Permission Error", 
                                "Cannot access the serial port.\n\n"
                                "Possible solutions:\n"
@@ -771,8 +1117,253 @@ class RS232ClientGUI:
                                "4. Reconnect USB to Serial adapter")
         except Exception as e:
             self.log_message(f"Unexpected error: {e}")
+            self.serial_status_label.config(text="🔴 Serial: Error")
             messagebox.showerror("Error", f"Unexpected error: {e}")
+
+        
+    def test_all_functions(self):
+        """ทดสอบทุกฟังก์ชัน"""
+        try:
+            self.log_message("=== Testing All Functions ===")
             
+            # 1. ทดสอบการเชื่อมต่อ Serial
+            self.log_message("1. Testing Serial Connection...")
+            ser = self.get_serial_connection()
+            if not ser:
+                self.log_message("   ❌ Serial connection failed")
+                messagebox.showerror("Error", "Serial connection failed!")
+                return
+            else:
+                self.log_message("   ✅ Serial connection successful!")
+            
+            # 2. ทดสอบการอ่านข้อมูล
+            self.log_message("2. Testing Data Reading...")
+            
+            # ล้าง buffer ก่อน
+            ser.reset_input_buffer()
+            ser.reset_output_buffer()
+            self.read_buffer = b''
+            
+            # อ่านข้อมูล 5 ครั้ง
+            data_received = False
+            for i in range(5):
+                try:
+                    original_timeout = ser.timeout
+                    ser.timeout = 0.5
+                    
+                    data = ser.read(100)
+                    if data:
+                        # ลบการแสดง Hex และ ASCII
+                        self.log_message(f"   Read {i+1}: {data.decode('latin-1', errors='ignore')}")
+                        self.read_buffer += data
+                        data_received = True
+                    else:
+                        self.log_message(f"   Read {i+1}: No data")
+                    
+                    ser.timeout = original_timeout
+                    time.sleep(0.3)  # เพิ่มเวลารอ
+                    
+                except Exception as e:
+                    self.log_message(f"   Read {i+1} error: {e}")
+            
+            if not data_received:
+                self.log_message("   ⚠️ No data received from scale")
+                messagebox.showwarning("Warning", "No data received from scale!\nPlease check if the scale is sending data.")
+                return
+            
+            # 3. ทดสอบการ parse และแสดงผล
+            self.log_message("3. Testing Data Parsing and Display...")
+            if self.read_buffer:
+                try:
+                    decoded = self.read_buffer.decode('latin-1', errors='ignore')
+                    self.log_message(f"   Decoded: '{decoded}'")
+                    
+                    # แยกข้อมูลตามบรรทัด
+                    lines = decoded.split('\r\n') + decoded.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if line:
+                            self.log_message(f"   Processing line: '{line}'")
+                            parsed_value = self.parse_scale_data(line)
+                            self.log_message(f"   Parsed result: {parsed_value}")
+                            
+                            # อัปเดต weight label
+                            if parsed_value != "N/A":
+                                self.last_weight = parsed_value
+                                self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                self.log_message(f"   ✅ Updated weight: {parsed_value}")
+                                break
+                            else:
+                                self.log_message(f"   ❌ Failed to parse: {line}")
+                    
+                except Exception as e:
+                    self.log_message(f"   Parse error: {e}")
+            
+            # 4. แนะนำการใช้งาน
+            self.log_message("4. Test Complete!")
+            result = messagebox.askyesno("Test Complete", 
+                                    "All tests completed!\n\n"
+                                    "Would you like to:\n"
+                                    "• Start real-time monitoring?\n"
+                                    "• Start the client?")
+            
+            if result:
+                # เปิด real-time monitoring
+                if not self.realtime_monitoring_active:
+                    self.toggle_realtime_monitoring()
+                
+                # แนะนำให้เริ่ม client
+                if not self.is_running:
+                    result2 = messagebox.askyesno("Start Client", 
+                                                "Would you like to start the client now?")
+                    if result2:
+                        self.start_client()
+            
+        except Exception as e:
+            self.log_message(f"Test all functions error: {e}")
+            messagebox.showerror("Error", f"Test failed: {e}")
+
+    def test_pattern_parsing(self):
+        """ทดสอบการ parse pattern โดยเฉพาะ"""
+        try:
+            self.log_message("=== Testing Pattern Parsing ===")
+            
+            # ข้อมูลทดสอบ
+            test_data = "ST,GS,+00000.0kg"
+            self.log_message(f"Test data: '{test_data}'")
+            
+            # ทดสอบทุก pattern
+            for pattern_name, patterns in SCALE_PATTERNS.items():
+                self.log_message(f"Testing pattern: {pattern_name}")
+                
+                # ตั้งค่า pattern ชั่วคราว
+                original_pattern = self.scale_pattern_var.get()
+                self.scale_pattern_var.set(pattern_name)
+                
+                # ทดสอบ parse
+                parsed_value = self.parse_scale_data(test_data)
+                self.log_message(f"   Result: {parsed_value}")
+                
+                # คืนค่า pattern เดิม
+                self.scale_pattern_var.set(original_pattern)
+            
+            self.log_message("=== Pattern Testing Complete ===")
+            
+        except Exception as e:
+            self.log_message(f"Pattern testing error: {e}")
+    def test_connection_status(self):
+        """ทดสอบสถานะการเชื่อมต่อและอัปเดต status"""
+        try:
+            # ตรวจสอบว่ามีการเชื่อมต่ออยู่หรือไม่
+            if self.serial_connection and self.serial_connection.is_open:
+                self.serial_status_label.config(text="🟢 Serial: Connected")
+                self.log_message("Serial connection is active")
+                return True
+            else:
+                # ลองเชื่อมต่อใหม่
+                test_config = {
+                    'port': self.port_var.get(),
+                    'baudrate': int(self.baudrate_var.get()),
+                    'parity': parity_map.get(self.parity_var.get(), serial.PARITY_NONE),
+                    'stopbits': stop_bits_map.get(self.stopbits_var.get(), serial.STOPBITS_ONE),
+                    'bytesize': byte_size_map.get(self.bytesize_var.get(), serial.EIGHTBITS),
+                    'timeout': 0.1  # ใช้ timeout สั้นๆ
+                }
+                
+                with serial.Serial(**test_config) as test_ser:
+                    if test_ser.is_open:
+                        self.serial_status_label.config(text="🟢 Serial: Available")
+                        self.log_message("Serial port is available")
+                        return True
+                    else:
+                        self.serial_status_label.config(text="🔴 Serial: Unavailable")
+                        self.log_message("Serial port is unavailable")
+                        return False
+                        
+        except serial.SerialException as e:
+            self.serial_status_label.config(text="🔴 Serial: Error")
+            self.log_message(f"Serial status check error: {e}")
+            return False
+        except PermissionError as e:
+            self.serial_status_label.config(text="🔴 Serial: Permission Denied")
+            self.log_message(f"Permission error: {e}")
+            return False
+        except Exception as e:
+            self.serial_status_label.config(text="🔴 Serial: Error")
+            self.log_message(f"Unexpected error: {e}")
+            return False
+
+    def debug_serial_reading(self):
+        """Debug การอ่านข้อมูล Serial"""
+        try:
+            self.log_message("=== Debug Serial Reading ===")
+            
+            ser = self.get_serial_connection()
+            if not ser:
+                self.log_message("❌ Serial connection not available!")
+                return
+            
+            # แสดงการตั้งค่า
+            self.log_message(f"✅ Serial connected: {ser.port}")
+            self.log_message(f"   Baudrate: {ser.baudrate}")
+            self.log_message(f"   Parity: {ser.parity}")
+            self.log_message(f"   Stop bits: {ser.stopbits}")
+            self.log_message(f"   Byte size: {ser.bytesize}")
+            self.log_message(f"   Timeout: {ser.timeout}")
+            
+            # ล้าง buffer
+            ser.reset_input_buffer()
+            ser.reset_output_buffer()
+            self.read_buffer = b''
+            
+            self.log_message("📖 Reading data continuously...")
+            
+            # อ่านข้อมูล 10 ครั้ง
+            for i in range(10):
+                try:
+                    original_timeout = ser.timeout
+                    ser.timeout = 0.2
+                    
+                    # ตรวจสอบข้อมูลใน buffer
+                    if ser.in_waiting > 0:
+                        self.log_message(f"   Buffer has {ser.in_waiting} bytes")
+                    
+                    # อ่านข้อมูล
+                    data = ser.read(100)
+                    if data:
+                        self.log_message(f"   Read {i+1}: {len(data)} bytes")
+                        # ลบการแสดง HEX และ ASCII
+                        self.log_message(f"      Data: '{data.decode('latin-1', errors='ignore')}'")
+                        
+                        # เพิ่มข้อมูลลงใน buffer
+                        self.read_buffer += data
+                        
+                        # ลอง decode
+                        try:
+                            decoded = self.read_buffer.decode('latin-1', errors='ignore')
+                            self.log_message(f"      Full buffer: '{decoded}'")
+                            
+                            # แยกบรรทัด
+                            lines = decoded.split('\r\n') + decoded.split('\n')
+                            for j, line in enumerate(lines):
+                                if line.strip():
+                                    self.log_message(f"      Line {j+1}: '{line.strip()}'")
+                        except Exception as e:
+                            self.log_message(f"      Decode error: {e}")
+                    else:
+                        self.log_message(f"   Read {i+1}: No data")
+                    
+                    ser.timeout = original_timeout
+                    time.sleep(0.1)
+                    
+                except Exception as e:
+                    self.log_message(f"   Read {i+1} error: {e}")
+            
+            self.log_message("=== Debug Complete ===")
+            
+        except Exception as e:
+            self.log_message(f"Debug error: {e}")
+
     def get_serial_connection(self):
         """เชื่อมต่อ RS232"""
         if self.serial_connection and self.serial_connection.is_open:
@@ -787,6 +1378,9 @@ class RS232ClientGUI:
                 'bytesize': byte_size_map.get(self.bytesize_var.get(), serial.EIGHTBITS),
                 'timeout': float(self.timeout_var.get())
             }
+            
+            # Log configuration for debugging
+            self.log_message(f"Connecting with config: {current_config['port']}, {current_config['baudrate']}, {self.parity_var.get()}, {self.stopbits_var.get()}, {self.bytesize_var.get()}")
             
             self.serial_connection = serial.Serial(**current_config)
             if self.serial_connection.is_open:
@@ -814,6 +1408,10 @@ class RS232ClientGUI:
             if selected_pattern not in SCALE_PATTERNS:
                 selected_pattern = 'Default'  # Fallback to default
                 
+            # ถ้าเป็น Raw Data (No Parse) ให้แสดงข้อมูลดิบเลย
+            if selected_pattern == 'Raw Data (No Parse)':
+                return cleaned_text.strip()
+                
             known_weight_indicators = SCALE_PATTERNS[selected_pattern]
         
             extracted_weight_values = []
@@ -825,7 +1423,11 @@ class RS232ClientGUI:
                             extracted_weight_values.append("0")
                         else:
                             try:
-                                weight_val = str(int(num_str_from_match))
+                                # รองรับทั้งตัวเลขเต็มและทศนิยม
+                                if '.' in num_str_from_match:
+                                    weight_val = str(float(num_str_from_match))
+                                else:
+                                    weight_val = str(int(num_str_from_match))
                                 extracted_weight_values.append(weight_val)
                             except ValueError:
                                 pass
@@ -840,7 +1442,7 @@ class RS232ClientGUI:
         except Exception as e:
             self.log_message(f"Parse error: {e}")
             return "N/A"
-        
+
     def read_weight_from_rs232(self):
         """อ่านน้ำหนักจาก RS232"""
         ser = self.get_serial_connection()
@@ -848,43 +1450,94 @@ class RS232ClientGUI:
             return self.last_weight
             
         try:
+            # อ่านข้อมูลที่มีอยู่ใน buffer
             if ser.in_waiting > 0:
                 new_bytes = ser.read(ser.in_waiting)
                 self.read_buffer += new_bytes
                 
+                # ส่งข้อมูลไปยัง real-time display
+                if new_bytes and self.realtime_monitoring_active:
+                    self.add_realtime_data(new_bytes)
+                
                 # Log raw data for debugging
                 if new_bytes:
-                    self.log_message(f"Raw data: {new_bytes.hex()}")
+                    self.log_message(f"Buffer data: {new_bytes.hex()} (ASCII: {new_bytes.decode('latin-1', errors='ignore')})")
             
-            while True:
-                stx_index = self.read_buffer.find(self.STX)
-                if stx_index != -1:
-                    etx_index = self.read_buffer.find(self.ETX, stx_index + 1)
-                    if etx_index != -1:
-                        complete_message_bytes = self.read_buffer[stx_index + 1: etx_index]
-                        try:
-                            decoded_message = complete_message_bytes.decode('latin-1').strip()
-                            self.log_message(f"Decoded message: {decoded_message}")
-                            parsed_value = self.parse_scale_data(decoded_message)
+            # ลองอ่านข้อมูลใหม่ (blocking read)
+            try:
+                # ใช้ timeout สั้นๆ เพื่อไม่ให้ block นาน
+                original_timeout = ser.timeout
+                ser.timeout = 0.1  # 100ms timeout
+                new_bytes = ser.read(100)  # อ่านสูงสุด 100 bytes
+                if new_bytes:
+                    self.read_buffer += new_bytes
+                    
+                    # ส่งข้อมูลไปยัง real-time display
+                    if self.realtime_monitoring_active:
+                        self.add_realtime_data(new_bytes)
+                    
+                    # Log raw data for debugging
+                    self.log_message(f"New data: {new_bytes.hex()} (ASCII: {new_bytes.decode('latin-1', errors='ignore')})")
+                ser.timeout = original_timeout
+            except Exception as e:
+                # ไม่มีข้อมูลใหม่ ไม่เป็นไร
+                pass
+            
+            # Process buffer for complete messages
+            if self.read_buffer:
+                # ลอง decode ข้อมูลทั้งหมดใน buffer
+                try:
+                    decoded_message = self.read_buffer.decode('latin-1', errors='ignore').strip()
+                    self.log_message(f"Full buffer: {decoded_message}")
+                    
+                    # แยกข้อมูลตามบรรทัด
+                    lines = decoded_message.split('\r\n') + decoded_message.split('\n')
+                    processed_lines = 0
+                    
+                    for line in lines:
+                        line = line.strip()
+                        if line:  # ถ้ามีข้อมูลในบรรทัด
+                            self.log_message(f"Processing line: '{line}'")
+                            parsed_value = self.parse_scale_data(line)
                             if parsed_value != "N/A":
                                 self.last_weight = parsed_value
-                                self.weight_label.config(text=f"⚖️ Weight: {parsed_value} kg")
-                        except Exception as e:
-                            self.log_message(f"Parse error: {e}")
-                        self.read_buffer = self.read_buffer[etx_index + 1:]
-                    else:
-                        break
-                else:
-                    break
+                                self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                self.log_message(f"Parsed weight: {parsed_value}")
+                                processed_lines += 1
+                    
+                    # ล้าง buffer เฉพาะบรรทัดที่ประมวลผลแล้ว
+                    if processed_lines > 0:
+                        # หาตำแหน่งของบรรทัดสุดท้ายที่ประมวลผล
+                        lines = decoded_message.split('\r\n') + decoded_message.split('\n')
+                        processed_content = '\r\n'.join(lines[:processed_lines])
+                        if processed_content:
+                            # ลบข้อมูลที่ประมวลผลแล้วออกจาก buffer
+                            remaining_content = decoded_message[len(processed_content):].lstrip('\r\n')
+                            self.read_buffer = remaining_content.encode('latin-1', errors='ignore')
+                            self.log_message(f"Buffer cleared, remaining: {remaining_content}")
+                    
+                    # ถ้า parse ไม่ได้ ให้เก็บข้อมูลไว้
+                    if len(self.read_buffer) > 1000:  # จำกัดขนาด buffer
+                        self.read_buffer = self.read_buffer[-500:]
+                        
+                except Exception as e:
+                    self.log_message(f"Buffer decode error: {e}")
+                    # ถ้า decode ไม่ได้ ให้เก็บข้อมูลไว้
+                    if len(self.read_buffer) > 1000:
+                        self.read_buffer = self.read_buffer[-500:]
             
             return self.last_weight
         except Exception as e:
             self.log_message(f"Serial read error: {e}")
             return "Error"
-            
     def start_client(self):
         """เริ่มต้น client"""
         if self.is_running:
+            return
+            
+        # ตรวจสอบการเชื่อมต่อ Serial ก่อนเริ่ม
+        if not self.test_connection_status():
+            messagebox.showwarning("Warning", "Serial port is not available!\nPlease check your connection and settings.")
             return
             
         self.is_running = True
@@ -896,12 +1549,57 @@ class RS232ClientGUI:
         self.client_thread.start()
         
         self.log_message("Client started")
+
         
+    def test_raw_reading(self):
+        """ทดสอบการอ่านข้อมูล Raw"""
+        try:
+            self.log_message("=== Testing Raw Reading ===")
+            
+            ser = self.get_serial_connection()
+            if not ser:
+                self.log_message("❌ Serial connection not available!")
+                return
+            
+            # ล้าง buffer
+            ser.reset_input_buffer()
+            ser.reset_output_buffer()
+            self.read_buffer = b''
+            
+            # อ่านข้อมูล 10 ครั้ง
+            for i in range(10):
+                try:
+                    original_timeout = ser.timeout
+                    ser.timeout = 0.5
+                    
+                    data = ser.read(100)
+                    if data:
+                        # ลบการแสดง Hex และ ASCII
+                        self.log_message(f"Read {i+1}: {data.decode('latin-1', errors='ignore')}")
+                        self.read_buffer += data
+                    else:
+                        self.log_message(f"Read {i+1}: No data")
+                    
+                    ser.timeout = original_timeout
+                    time.sleep(0.2)
+                    
+                except Exception as e:
+                    self.log_message(f"Read {i+1} error: {e}")
+            
+            self.log_message("=== Raw Reading Test Complete ===")
+            
+        except Exception as e:
+            self.log_message(f"Raw reading test error: {e}")
+                
     def stop_client(self):
         """หยุด client"""
         try:
             self.is_running = False
             self.is_connected = False
+            
+            # หยุด real-time monitoring
+            if self.realtime_monitoring_active:
+                self.toggle_realtime_monitoring()
             
             if self.serial_connection and self.serial_connection.is_open:
                 self.serial_connection.close()
@@ -975,20 +1673,108 @@ class RS232ClientGUI:
             except Exception as e:
                 self.log_message(f"Error sending data: {e}")
                 break
-                
+
+        
+    def test_raw_data_display(self):
+        """ทดสอบการแสดงข้อมูล Raw Data"""
+        try:
+            ser = self.get_serial_connection()
+            if not ser:
+                messagebox.showerror("Error", "Serial connection not available!")
+                return
+            
+            self.log_message("=== Testing Raw Data Display ===")
+            
+            # ล้าง buffer ก่อน
+            ser.reset_input_buffer()
+            ser.reset_output_buffer()
+            self.read_buffer = b''
+            
+            # อ่านข้อมูล 5 ครั้ง
+            for i in range(5):
+                try:
+                    # ตั้ง timeout สั้นๆ
+                    original_timeout = ser.timeout
+                    ser.timeout = 0.5
+                    
+                    # อ่านข้อมูล
+                    data = ser.read(100)
+                    if data:
+                        # ลบการแสดง Hex และ ASCII
+                        self.log_message(f"Read {i+1}: {data.decode('latin-1', errors='ignore')}")
+                        
+                        # เพิ่มข้อมูลลงใน buffer
+                        self.read_buffer += data
+                        
+                        # ลอง decode และ parse
+                        try:
+                            decoded = self.read_buffer.decode('latin-1', errors='ignore')
+                            self.log_message(f"Decoded: '{decoded}'")
+                            
+                            # แยกข้อมูลตามบรรทัด
+                            lines = decoded.split('\r\n') + decoded.split('\n')
+                            for line in lines:
+                                line = line.strip()
+                                if line:
+                                    self.log_message(f"Processing line: '{line}'")
+                                    parsed_value = self.parse_scale_data(line)
+                                    self.log_message(f"Parsed result: {parsed_value}")
+                                    
+                                    # อัปเดต weight label
+                                    if parsed_value != "N/A":
+                                        self.last_weight = parsed_value
+                                        self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                        self.log_message(f"Updated weight: {parsed_value}")
+                        except Exception as e:
+                            self.log_message(f"Parse error: {e}")
+                    else:
+                        self.log_message(f"Read {i+1}: No data")
+                    
+                    ser.timeout = original_timeout
+                    time.sleep(0.2)  # รอ 200ms
+                    
+                except Exception as e:
+                    self.log_message(f"Read {i+1} error: {e}")
+            
+            self.log_message("=== Raw Data Display Test Complete ===")
+            
+        except Exception as e:
+            self.log_message(f"Test raw data display error: {e}")
+            messagebox.showerror("Error", f"Test failed: {e}")
+
     def run(self):
         """เริ่มต้น GUI"""
         try:
+            # ตั้งค่า protocol สำหรับการปิดโปรแกรม
+            self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+            
             self.log_message("RS232 Scale Client GUI started")
             self.root.mainloop()
         except Exception as e:
             print(f"GUI error: {e}")
+    
+    def on_closing(self):
+        """จัดการเมื่อปิดโปรแกรม"""
+        try:
+            # หยุด real-time monitoring
+            if self.realtime_monitoring_active:
+                self.toggle_realtime_monitoring()
+            
+            # หยุด client ถ้ากำลังทำงาน
+            if self.is_running:
+                self.stop_client()
+            
+            # ปิดโปรแกรม
+            self.root.destroy()
+        except Exception as e:
+            print(f"Closing error: {e}")
+            self.root.destroy()
 
     def show_main_help(self):
         """แสดงหน้าต่าง Help หลัก"""
         help_window = tk.Toplevel(self.root)
         help_window.title("❓ Help - RS232 Scale Client")
-        help_window.geometry("700x600")
+        help_window.geometry("700x500")
         help_window.configure(bg='#f0f0f0')
         
         # Make window modal
@@ -1054,6 +1840,21 @@ class RS232ClientGUI:
 • Stop: หยุดการทำงาน Client
 • ❓ Help: แสดงคู่มือการใช้งาน
 
+🔍 Real-time RS232 Data Monitoring:
+
+• ▶️ Start Monitoring: เริ่มการ monitor ข้อมูล real-time
+• ⏸️ Stop Monitoring: หยุดการ monitor ข้อมูล real-time
+• 🗑️ Clear Data: ล้างข้อมูล real-time
+• Auto-scroll: เลื่อนหน้าจออัตโนมัติ
+• Max lines: จำกัดจำนวนบรรทัดที่แสดง
+
+📊 ข้อมูลที่แสดงใน Real-time:
+• Timestamp: เวลาที่รับข้อมูล (แสดง milliseconds)
+• HEX: ข้อมูลในรูปแบบ Hexadecimal
+• ASCII: ข้อมูลในรูปแบบ ASCII (แสดง . สำหรับตัวอักษรที่ไม่แสดงผล)
+• DEC: ข้อมูลในรูปแบบ Decimal
+• Length: จำนวน bytes ที่รับได้
+
  การตรวจสอบสถานะ:
 
 • 🔴 Serial: Disconnected - ไม่เชื่อมต่อ Serial
@@ -1076,14 +1877,16 @@ class RS232ClientGUI:
 
 💡 เคล็ดลับ:
 • ใช้ปุ่ม  Check เพื่อดูรายละเอียดพอร์ต
-• ใช้ Activity Log เพื่อตรวจสอบข้อมูล
+• ใช้ Real-time monitoring เพื่อดูข้อมูลดิบจากตาชั่ง
+• ใช้ข้อมูล real-time เพื่อปรับแต่ง Scale Pattern
 • บันทึกการตั้งค่าหลังจากทดสอบแล้ว
 • ใช้ Custom Pattern 3 สำหรับตาชั่งที่ไม่รองรับ
 
 🔗 การเชื่อมต่อ:
 • Serial Port → ตาชั่ง
 • WebSocket → Server
-• ข้อมูลน้ำหนักจะถูกส่งไปยัง Server ทุก 0.5 วินาที"""
+• ข้อมูลน้ำหนักจะถูกส่งไปยัง Server ทุก 0.5 วินาที
+• Real-time monitoring อัปเดตทุก 100ms"""
         
         help_text.insert(tk.END, help_content)
         help_text.config(state=tk.DISABLED)
