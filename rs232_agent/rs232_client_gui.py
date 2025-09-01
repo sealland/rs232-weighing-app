@@ -114,7 +114,7 @@ class RS232ClientGUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(f"RS232 Scale Client - {CLIENT_ID}")
-        self.root.geometry("1000x800")  # เพิ่มขนาดเพื่อรองรับ Offline Mode
+        self.root.geometry("980x750") # ปรับขนาดหน้าต่างให้เหมาะสม
         self.root.configure(bg='#f0f0f0')
         
         # Client variables
@@ -163,8 +163,8 @@ class RS232ClientGUI:
         self.setup_ui()
         self.update_available_ports()
         
-        # เพิ่ม Offline Mode UI
-        self.offline_ui = OfflineModeUI(self.root)
+        # เพิ่ม Offline Mode UI เข้าไปใน right_panel ที่สร้างใน setup_ui
+        self.offline_ui = OfflineModeUI(self, self.right_panel)
         
         # เพิ่ม Connection Monitor
         self.connection_monitor = ConnectionMonitor(self)
@@ -345,74 +345,29 @@ class RS232ClientGUI:
         server_entry = ttk.Entry(server_frame, textvariable=self.server_url_var, width=35, font=('Tahoma', 8))
         server_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=3)
         
-        # Client ID
         ttk.Label(server_frame, text="Client ID:", font=('Tahoma', 8)).grid(row=1, column=0, sticky=tk.W, padx=(0, 8))
         client_id_entry = ttk.Entry(server_frame, textvariable=self.client_id_var, width=15, font=('Tahoma', 8))
         client_id_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=3)
         
-        # Control Buttons Frame
-        control_frame = ttk.Frame(left_panel)
-        control_frame.grid(row=5, column=0, columnspan=2, pady=(0, 8))
-        
-        self.test_btn = ttk.Button(control_frame, text="�� Test All", command=self.test_all_functions, width=10)
-        self.test_btn.grid(row=0, column=0, padx=(0, 5))
-        
-        self.save_btn = ttk.Button(control_frame, text="Save", command=self.save_configuration, width=8)
-        self.save_btn.grid(row=0, column=1, padx=(0, 5))
-        
-        self.start_btn = ttk.Button(control_frame, text="Start", command=self.start_client, width=8)
-        self.start_btn.grid(row=0, column=2, padx=(0, 5))
-        
-        self.stop_btn = ttk.Button(control_frame, text="Stop", command=self.stop_client, state='disabled', width=8)
-        self.stop_btn.grid(row=0, column=3)
-        
-        # Help Button
-        help_btn = ttk.Button(control_frame, text="❓ Help", command=self.show_main_help, width=8)
-        help_btn.grid(row=0, column=4, padx=(5, 0))
-
-        debug_btn = ttk.Button(control_frame, text="🐛 Debug", command=self.debug_serial_reading, width=8)
-        debug_btn.grid(row=0, column=5, padx=(5, 0))
-        
-        pattern_test_btn = ttk.Button(control_frame, text="🔍 Test Pattern", command=self.test_pattern_parsing, width=10)
-        pattern_test_btn.grid(row=0, column=6, padx=(5, 0))
-        
-        # Frontend and Tray Buttons Frame
-        frontend_tray_frame = ttk.Frame(left_panel)
-        frontend_tray_frame.grid(row=6, column=0, columnspan=2, pady=(0, 8))
-        
-        # Frontend Button - ใหญ่และชัดเจน
-        self.frontend_btn = ttk.Button(frontend_tray_frame, text="🌐 OPEN FRONTEND", 
-                                      command=self.open_frontend, width=20, 
-                                      style='Accent.TButton')
-        self.frontend_btn.grid(row=0, column=0, padx=(0, 10))
-        
-        # Tray Button
-        self.tray_btn = ttk.Button(frontend_tray_frame, text="📌 Hide to Tray", 
-                                  command=self.minimize_to_tray, width=12)
-        self.tray_btn.grid(row=0, column=1)
-
-        # Config Path Note
+        # Config Path Note (ย้ายมาไว้ล่างสุดของ left_panel)
         config_abs_path = os.path.abspath(CLIENT_CONFIG_FILE)
         config_note_label = ttk.Label(left_panel, 
                                      text=f"Config: {os.path.basename(config_abs_path)}", 
                                      font=('Tahoma', 7), 
                                      foreground='gray')
-        config_note_label.grid(row=7, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        config_note_label.grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(10, 5))
         
         # Right Panel - Status & Monitoring
         right_panel = ttk.Frame(main_frame)
         right_panel.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(5, 0))
         right_panel.columnconfigure(0, weight=1)
-        right_panel.rowconfigure(1, weight=1)
-        right_panel.rowconfigure(2, weight=1)  # เพิ่ม weight สำหรับ real-time frame
-        main_frame.rowconfigure(1, weight=1)
-        main_frame.columnconfigure(1, weight=1)
-        
+        right_panel.rowconfigure(1, weight=1) # Real-time frame
+        self.right_panel = right_panel
+
         # Status Frame
         status_frame = ttk.LabelFrame(right_panel, text="Status & Monitoring", padding="8")
-        status_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 8))
+        status_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         status_frame.columnconfigure(0, weight=1)
-        status_frame.rowconfigure(1, weight=1)
         
         # Status indicators
         status_indicators_frame = ttk.Frame(status_frame)
@@ -437,23 +392,19 @@ class RS232ClientGUI:
         log_frame = ttk.Frame(status_frame)
         log_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
+        log_frame.rowconfigure(1, weight=1)
         
-        ttk.Label(log_frame, text="Activity Log:", font=('Tahoma', 8)).grid(row=0, column=0, sticky=tk.W, pady=(0, 3))
-        
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=12, width=50, font=('Tahoma', 8))
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=6, width=50, font=('Tahoma', 8)) # <--- ลดขนาด
         self.log_text.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # Clear log button
         clear_log_btn = ttk.Button(log_frame, text="Clear Log", command=self.clear_log, width=10)
         clear_log_btn.grid(row=2, column=0, pady=(3, 0))
         
         # Real-time RS232 Data Display Frame
-        realtime_frame = ttk.LabelFrame(status_frame, text="🔍 Real-time RS232 Data", padding="8")
-        realtime_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(8, 0))
+        realtime_frame = ttk.LabelFrame(right_panel, text="🔍 Real-time RS232 Data", padding="8")
+        realtime_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 8))
         realtime_frame.columnconfigure(0, weight=1)
         realtime_frame.rowconfigure(1, weight=1)
-        realtime_frame.rowconfigure(2, weight=0)  # info label ไม่ขยาย
         
         # Real-time data controls
         realtime_controls_frame = ttk.Frame(realtime_frame)
@@ -495,8 +446,7 @@ class RS232ClientGUI:
         auto_scroll_check.bind('<Button-1>', self.on_auto_scroll_change)
         
         # Real-time data display
-        self.realtime_text = scrolledtext.ScrolledText(realtime_frame, height=23, width=50, 
-                                                     font=('Consolas', 8), bg='#1e1e1e', fg='#00ff00')
+        self.realtime_text = scrolledtext.ScrolledText(realtime_frame, height=10, width=50, font=('Consolas', 8), bg='#1e1e1e', fg='#00ff00') # <--- ลดขนาด
         self.realtime_text.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # Real-time data info
@@ -513,6 +463,50 @@ class RS232ClientGUI:
         self.realtime_monitoring_active = False
         self.realtime_update_timer = None
         
+        # === ย้าย Control Frames มาไว้ที่ Right Panel ===
+        
+        # Control Buttons Frame
+        control_frame = ttk.LabelFrame(right_panel, text="Main Controls", padding="8")
+        control_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        control_frame.columnconfigure((0, 1, 2, 3), weight=1)
+
+        self.start_btn = ttk.Button(control_frame, text="▶️ Start", command=self.start_client)
+        self.start_btn.grid(row=0, column=0, padx=2, sticky=tk.EW)
+        
+        self.stop_btn = ttk.Button(control_frame, text="⏹️ Stop", command=self.stop_client, state='disabled')
+        self.stop_btn.grid(row=0, column=1, padx=2, sticky=tk.EW)
+        
+        self.save_btn = ttk.Button(control_frame, text="💾 Save", command=self.save_configuration)
+        self.save_btn.grid(row=0, column=2, padx=2, sticky=tk.EW)
+
+        self.test_btn = ttk.Button(control_frame, text="🧪 Test All", command=self.test_all_functions)
+        self.test_btn.grid(row=0, column=3, padx=2, sticky=tk.EW)
+        
+        # App & Help Buttons Frame
+        app_help_frame = ttk.LabelFrame(right_panel, text="Application", padding="8")
+        app_help_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        app_help_frame.columnconfigure((0, 1, 2), weight=1)
+
+        self.frontend_btn = ttk.Button(app_help_frame, text="🌐 Open Frontend", command=self.open_frontend, style='Accent.TButton')
+        self.frontend_btn.grid(row=0, column=0, padx=2, sticky=tk.EW)
+        
+        self.tray_btn = ttk.Button(app_help_frame, text="📌 Hide to Tray", command=self.minimize_to_tray)
+        self.tray_btn.grid(row=0, column=1, padx=2, sticky=tk.EW)
+        
+        help_btn = ttk.Button(app_help_frame, text="❓ Help", command=self.show_main_help)
+        help_btn.grid(row=0, column=2, padx=2, sticky=tk.EW)
+        
+        # Debugging Buttons Frame
+        debug_frame = ttk.LabelFrame(right_panel, text="Debugging Tools", padding="8")
+        debug_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        debug_frame.columnconfigure((0, 1), weight=1)
+
+        debug_btn = ttk.Button(debug_frame, text="🐛 Debug Serial", command=self.debug_serial_reading)
+        debug_btn.grid(row=0, column=0, padx=2, sticky=tk.EW)
+        
+        pattern_test_btn = ttk.Button(debug_frame, text="🔍 Test Pattern", command=self.test_pattern_parsing)
+        pattern_test_btn.grid(row=0, column=1, padx=2, sticky=tk.EW)
+
     def show_help(self):
         """แสดงหน้าต่าง Help"""
         help_window = tk.Toplevel(self.root)
@@ -4068,17 +4062,19 @@ class ConnectionMonitor:
 
 # เพิ่ม Offline Mode UI Class
 class OfflineModeUI:
-    def __init__(self, parent):
-        self.parent = parent
+    def __init__(self, client_gui, parent_frame):
+        self.client_gui = client_gui
+        self.parent_frame = parent_frame
         self.setup_offline_ui()
     
     def setup_offline_ui(self):
-        """สร้าง UI สำหรับ Offline Mode"""
-        # ใช้ grid แทน pack เพื่อให้เข้ากับ layout หลัก
-        self.offline_frame = ttk.LabelFrame(self.parent, text="🔄 Offline Mode & Local Storage")
-        self.offline_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), padx=10, pady=5)
+        """สร้าง UI สำหรับ Offline Mode ภายใน parent_frame"""
+        self.offline_frame = ttk.LabelFrame(self.parent_frame, text="🔄 Offline Mode & Local Storage")
+        # จัดวาง UI ของ Offline ต่อจาก debug_frame ที่ row 5
+        self.offline_frame.grid(row=5, column=0, sticky=(tk.W, tk.E), padx=0, pady=5)
         self.offline_frame.columnconfigure(1, weight=1)
-        
+        # ... (rest of method is correct) ...
+
         # สถานะการเชื่อมต่อ
         self.connection_status = ttk.Label(
             self.offline_frame, 
@@ -4098,14 +4094,11 @@ class OfflineModeUI:
         # Frame สำหรับปุ่มต่างๆ
         button_frame = ttk.Frame(self.offline_frame)
         button_frame.grid(row=2, column=0, columnspan=2, pady=5)
-        button_frame.columnconfigure(0, weight=1)
-        button_frame.columnconfigure(1, weight=1)
-        button_frame.columnconfigure(2, weight=1)
         
         # ปุ่ม Sync ข้อมูล
         self.sync_button = ttk.Button(
             button_frame,
-            text="🔄 Sync Data to Server",
+            text="🔄 Sync Data",
             command=self.sync_data,
             style="Accent.TButton"
         )
@@ -4114,7 +4107,7 @@ class OfflineModeUI:
         # ปุ่ม Export CSV
         self.export_button = ttk.Button(
             button_frame,
-            text="📊 Export to CSV",
+            text="📊 Export CSV",
             command=self.export_data
         )
         self.export_button.grid(row=0, column=1, padx=5)
@@ -4122,16 +4115,16 @@ class OfflineModeUI:
         # ปุ่ม View Local Data
         self.view_button = ttk.Button(
             button_frame,
-            text="👁️ View Local Data",
+            text="👁️ View Data",
             command=self.view_local_data
         )
         self.view_button.grid(row=0, column=2, padx=5)
-    
+
     def update_connection_status(self, is_online):
         """อัปเดตสถานะการเชื่อมต่อ"""
         if is_online:
             self.connection_status.config(
-                text=" Online - Connected to Server",
+                text="🟢 Online - Connected to Server",
                 foreground="green"
             )
         else:
@@ -4139,42 +4132,38 @@ class OfflineModeUI:
                 text="🔴 Offline - Local Mode Active",
                 foreground="red"
             )
-    
+
     def update_local_data_display(self):
         """อัปเดตการแสดงข้อมูล Local"""
-        if hasattr(self.parent, 'local_data_manager'):
-            stats = self.parent.local_data_manager.get_local_stats()
+        if hasattr(self.client_gui, 'local_data_manager'):
+            stats = self.client_gui.local_data_manager.get_local_stats()
             self.local_data_label.config(
-                text=f"Local Records: {stats['total']} | Synced: {stats['synced']} | Unsynced: {stats['unsynced']}"
+                text=f"Local: {stats['total']} | Synced: {stats['synced']} | Unsynced: {stats['unsynced']}"
             )
     
     def sync_data(self):
         """Sync ข้อมูลจาก Local ไป Server"""
-        if hasattr(self.parent, 'local_data_manager'):
-            unsynced_data = self.parent.local_data_manager.get_unsynced_data()
+        if hasattr(self.client_gui, 'local_data_manager'):
+            unsynced_data = self.client_gui.local_data_manager.get_unsynced_data()
             if unsynced_data:
-                self.parent.log_message(f"Syncing {len(unsynced_data)} records...")
-                # ส่งข้อมูลไป Server
+                self.client_gui.log_message(f"Syncing {len(unsynced_data)} records...")
                 for record in unsynced_data:
-                    self.parent.send_offline_data_to_server(record)
+                    self.client_gui.send_offline_data_to_server(record)
             else:
-                self.parent.log_message("No data to sync")
+                self.client_gui.log_message("No data to sync")
     
     def export_data(self):
         """Export ข้อมูลเป็น CSV"""
-        if hasattr(self.parent, 'local_data_manager'):
+        if hasattr(self.client_gui, 'local_data_manager'):
             filename = f"weight_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            count = self.parent.local_data_manager.export_to_csv(filename)
+            count = self.client_gui.local_data_manager.export_to_csv(filename)
             if count > 0:
-                self.parent.log_message(f"Exported {count} records to {filename}")
-                messagebox.showinfo("Export Success", f"Exported {count} records to {filename}")
-            else:
-                messagebox.showerror("Export Error", "No data to export")
+                self.client_gui.log_message(f"Exported {count} records to {filename}")
     
     def view_local_data(self):
         """แสดงข้อมูล Local ในหน้าต่างใหม่"""
-        if hasattr(self.parent, 'local_data_manager'):
-            self.parent.show_local_data_window()
+        if hasattr(self.client_gui, 'local_data_manager'):
+            self.client_gui.local_data_manager.show_local_data_window()
 
 class LocalWebServer:
     def __init__(self, client_gui):
