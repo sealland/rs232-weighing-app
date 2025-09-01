@@ -2,11 +2,9 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import TicketDetailModal from './components/TicketDetailModal.vue'
 import CreateTicketModal from './components/CreateTicketModal.vue'
-import OfflineDataModal from './components/OfflineDataModal.vue'; // เพิ่ม Component
 
-const API_BASE_URL = 'http://192.168.132.7:8000';
-const API_OFFLINE_URL = 'http://localhost:8080'; // <-- เพิ่ม URL สำหรับ Local API
-const WEBSOCKET_URL = 'ws://192.168.132.7:8765';
+const API_BASE_URL = 'http://192.168.132.7:8000';  // เปลี่ยนเป็น IP ของเครื่อง Dev
+const WEBSOCKET_URL = 'ws://192.168.132.7:8765';   // เปลี่ยนเป็น IP ของเครื่อง Dev
 
 // --- State Management ---
 const currentWeight = ref('0')
@@ -42,18 +40,11 @@ const isUpdatingTicket = ref(false)
 const isCancellingTicket = ref(false)
 const isPrintingReport = ref(false)
 
-// --- เพิ่ม State สำหรับ Offline Mode ---
-const isOnline = ref(navigator.onLine);
-const isOfflineModalVisible = ref(false); // State สำหรับเปิด/ปิด Modal ข้อมูล Offline
-
 // เพิ่ม state สำหรับการเลือกการดำเนินการ
 const printAction = ref('preview') // 'preview', 'print', หรือ 'download'
 
-// --- Computed Property ---
-const activeApiUrl = computed(() => {
-  return isOnline.value ? API_BASE_URL : API_OFFLINE_URL;
-});
 
+// --- Computed Property ---
 const selectedTicketObject = computed(() => {
   if (!selectedTicketId.value) return null;
 
@@ -82,7 +73,7 @@ function getReportTypeText(ticket) {
 // --- Functions: Data Fetching ---
 async function fetchOpenTickets(dateStr) {
   try {
-    const response = await fetch(`${activeApiUrl.value}/api/tickets/?target_date=${dateStr}`)
+    const response = await fetch(`${API_BASE_URL}/api/tickets/?target_date=${dateStr}`)
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
     openTickets.value = await response.json()
   } catch (error) {
@@ -92,7 +83,7 @@ async function fetchOpenTickets(dateStr) {
 }
 async function fetchCompletedTickets(dateStr) {
   try {
-    const response = await fetch(`${activeApiUrl.value}/api/tickets/completed?target_date=${dateStr}`)
+    const response = await fetch(`${API_BASE_URL}/api/tickets/completed?target_date=${dateStr}`)
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
     completedTickets.value = await response.json()
   } catch (error) {
@@ -102,7 +93,7 @@ async function fetchCompletedTickets(dateStr) {
 }
 async function fetchCarQueue() {
   try {
-    const response = await fetch(`${activeApiUrl.value}/api/car-queue/`);
+    const response = await fetch(`${API_BASE_URL}/api/car-queue/`);
     if (!response.ok) throw new Error('Could not fetch car queue');
     carQueue.value = await response.json();
   } catch (error) {
@@ -133,40 +124,57 @@ function connectWebSocket() {
 
 // --- Functions: Modal Control & Ticket Actions ---
 async function openCreateTicketModal() {
-  // ใน Offline Mode เราอาจจะไม่สามารถดึง Car Queue ได้
-  if (isOnline.value) {
-    await fetchCarQueue();
-  } else {
-    // อาจจะแสดงข้อความเตือน หรือใช้ข้อมูลเก่าถ้ามี
-    console.warn("Cannot fetch car queue in offline mode.");
-    carQueue.value = []; // ล้างข้อมูลเก่า
+  await fetchCarQueue();
+  const weightValue = parseInt(currentWeight.value.replace(/,/g, ''), 10);
+  if (isNaN(weightValue)) {
+     alert('ค่าน้ำหนักไม่ถูกต้อง');
+     return;
   }
-  initialWeightForNewTicket.value = parseFloat(currentWeight.value.replace(/,/g, '')) || 0;
+  initialWeightForNewTicket.value = weightValue;
+  
+  // เคลียร์ข้อมูลชั่งต่อเนื่องเมื่อกด "สร้างบัตรชั่งใหม่"
+  continuousWeighingData.value = null;
+  
   isCreateModalVisible.value = true;
 }
 
-function closeCreateTicketModal() {
+// เพิ่มฟังก์ชันใหม่สำหรับจัดการเมื่อสร้างบัตรชั่งใหม่สำเร็จ
+async function handleTicketCreated(newTicket) {
+  console.log('New ticket created:', newTicket);
+  
+  // อัปเดตรายการบัตรชั่งที่กำลังดำเนินการ
+  await fetchOpenTickets(selectedDate.value);
+  
+  // อัปเดตรายการบัตรชั่งที่เสร็จสิ้นแล้ว
+  await fetchCompletedTickets(selectedDate.value);
+  
+  // ปิด modal
   isCreateModalVisible.value = false;
-}
-
-async function createTicket(ticketData) {
-  isCreatingTicket.value = true
-  try {
-    const response = await fetch(`${activeApiUrl.value}/api/tickets/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ticketData),
-    });
-    if (!response.ok) throw new Error('Server error!');
-    alert('สร้างบัตรชั่งใหม่สำเร็จ!');
-    isCreateModalVisible.value = false;
-    await fetchOpenTickets(selectedDate.value);
-  } catch (error) {
-    console.error('Failed to create ticket:', error);
-    alert('เกิดข้อผิดพลาดในการสร้างบัตรชั่ง');
-  } finally {
-    isCreatingTicket.value = false;
+  
+  // เลือกบัตรชั่งที่สร้างใหม่โดยอัตโนมัติ
+  selectedTicketId.value = newTicket.WE_ID;
+  
+  // ตรวจสอบว่าบัตรชั่งใหม่อยู่ในตารางไหน
+  const isInOpenTickets = openTickets.value.some(ticket => ticket.WE_ID === newTicket.WE_ID);
+  const isInCompletedTickets = completedTickets.value.some(ticket => ticket.WE_ID === newTicket.WE_ID);
+  
+  // สลับไปยัง tab ที่มีบัตรชั่งใหม่
+  if (isInOpenTickets) {
+    activeTab.value = 'inProgress';
+  } else if (isInCompletedTickets) {
+    activeTab.value = 'completed';
   }
+  
+  // แสดงข้อความสำเร็จ
+  alert(`สร้างบัตรชั่งใหม่สำเร็จ!\nเลขที่บัตร: ${newTicket.WE_ID}`);
+  
+  // เลื่อนไปยังบัตรชั่งที่เลือก (optional)
+  setTimeout(() => {
+    const selectedElement = document.querySelector(`[data-ticket-id="${newTicket.WE_ID}"]`);
+    if (selectedElement) {
+      selectedElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, 100);
 }
 
 async function showTicketDetails(ticket_id) {
@@ -648,7 +656,7 @@ async function handleTicketUpdate(eventData) {
   try {
     // --- ส่วนที่ 1: อัปเดตข้อมูลหลัก (ใช้ ticketId ที่รับมา) ---
     console.log("Sending main data update (PATCH):", updatePayload.mainData);
-    const mainResponse = await fetch(`${activeApiUrl.value}/api/tickets/${ticketId}`, { // <-- ใช้ ticketId
+    const mainResponse = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}`, { // <-- ใช้ ticketId
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updatePayload.mainData),
@@ -663,7 +671,7 @@ async function handleTicketUpdate(eventData) {
     // --- ส่วนที่ 2: ถ้าไม่มี Error และมีรายการใหม่ให้แทนที่ ให้เรียก API "แทนที่" ---
     if (!hasError && updatePayload.newItems) {
       console.log("Sending new items to replace (PUT):", updatePayload.newItems);
-      const itemsResponse = await fetch(`${activeApiUrl.value}/api/tickets/${ticketId}/items`, { // <-- ใช้ ticketId
+      const itemsResponse = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}/items`, { // <-- ใช้ ticketId
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatePayload.newItems),
@@ -720,13 +728,10 @@ watch(selectedDate, async (newDate) => {
   await fetchCompletedTickets(newDate);
 });
 onMounted(async () => {
-  // --- เพิ่ม Event Listeners สำหรับ Online/Offline Status ---
-  window.addEventListener('online', () => isOnline.value = true);
-  window.addEventListener('offline', () => isOnline.value = false);
-
-  connectWebSocket()
-  fetchDataForDate(selectedDate.value)
-})
+  await fetchOpenTickets(selectedDate.value);
+  await fetchCompletedTickets(selectedDate.value);
+  connectWebSocket();
+});
 
 // ฟังก์ชันใหม่สำหรับสั่งพิมพ์ผ่านการดาวน์โหลดไฟล์
 async function printViaDownload(blob, filename) {
@@ -1286,22 +1291,20 @@ async function printViaBackend(ticketId, reportType, hasItems) {
   <div class="app-container">
     <main>
       <div class="left-panel card">
+        <!-- ส่วนแสดงน้ำหนัก Real-time -->
         <div class="weight-display-container">
           <div class="weight-display">
             <div class="weight-icon">⚖️</div>
-            <span :style="{ fontSize: 'clamp(2.5rem, 10vw, 4.5rem)' }">{{ currentWeight.toLocaleString() }}</span>
+            <span :style="{ fontSize: 'clamp(2.5rem, 10vw, 4.5rem)' }">{{ currentWeight }}</span>
             <div class="weight-unit">กิโลกรัม</div>
           </div>
-          <div class="connection-status" :class="{
-              'connected': wsStatus === 'Connected' && isOnline,
-              'disconnected': wsStatus !== 'Connected' && isOnline,
-              'offline': !isOnline
-            }">
-             <span class="status-indicator"></span>
-            <span class="status-text">{{ isOnline ? wsStatus : 'Offline Mode' }}</span>
+          <div class="connection-status" :class="wsStatus.toLowerCase()">
+            <span class="status-icon">🔗</span>
+            <span class="status-text">{{ wsStatus }}</span>
           </div>
         </div>
 
+        <!-- เส้นแบ่ง -->
         <hr class="divider">
         
         <div class="create-ticket-panel">
@@ -1311,6 +1314,9 @@ async function printViaBackend(ticketId, reportType, hasItems) {
           </button>
         </div>
 
+        <!-- ========================================================== -->
+        <!-- ส่วน Action Panel (ปรับปรุงใหม่ทั้งหมด) -->
+        <!-- ========================================================== -->
         <div class="action-panel">
           <div class="selected-ticket-info">
             <label>📋 บัตรที่เลือก:</label>
@@ -1325,66 +1331,123 @@ async function printViaBackend(ticketId, reportType, hasItems) {
             </div>
           </div>
 
+          <!-- แสดงปุ่มก็ต่อเมื่อมีการเลือกบัตรแล้ว -->
           <div v-if="selectedTicketObject" class="action-buttons-grid">
-             <button class="action-btn detail-btn" @click="openDetailModal(selectedTicketObject)">
+            
+            <!-- ปุ่มที่แสดงเสมอ -->
+            <button class="action-btn detail-btn" @click="showTicketDetails(selectedTicketId)">
               <span class="button-icon">🔍</span>
-              ดู/แก้ไข
+              ดูรายละเอียด
             </button>
             <button 
               class="action-btn cancel-btn"
-              @click="cancelTicket(selectedTicketId)"
-              :disabled="!!selectedTicketObject.WE_CANCEL || !!selectedTicketObject.WE_WEIGHTOUT"
+              @click="handleCancelTicket"
+              :disabled="isCancellingTicket"
             >
               <span class="button-icon">❌</span>
-              ยกเลิกบัตร
+              {{ isCancellingTicket ? 'กำลังยกเลิก...' : 'ยกเลิกบัตรชั่ง' }}
             </button>
 
+            <!-- V V V V V V V V V V V V V V V V V V V V V V V V V V V V -->
+            <!-- ปุ่มที่แสดงตามเงื่อนไข -->
             <template v-if="selectedTicketObject.WE_WEIGHTOUT">
-               <button 
+              <!-- กรณี: ชั่งออกไปแล้ว -->
+              <button 
                 class="action-btn continuous-btn"
-                @click="openContinuousWeighingModal"
-                :disabled="selectedTicketObject.WE_CONT === 'X'"
+                @click="handleStartContinuousWeighing"
               >
                 <span class="button-icon">🔄</span>
                 ชั่งต่อเนื่อง
               </button>
             </template>
             <template v-else>
+              <!-- กรณี: ยังไม่ได้ชั่งออก -->
               <button 
                 class="action-btn weigh-out-btn"
-                @click="updateTicketWeighOut(selectedTicketId)"
-                :disabled="!!selectedTicketObject.WE_WEIGHTOUT"
+                @click="handleWeighOut"
+                :disabled="isUpdatingTicket"
               >
                 <span class="button-icon">📤</span>
-                บันทึกน้ำหนักออก
+                {{ isUpdatingTicket ? 'กำลังบันทึก...' : 'บันทึกน้ำหนักชั่งออก' }}
               </button>
             </template>
+            <!-- ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ -->
 
+            <!-- ส่วนพิมพ์รายงาน (แสดงเสมอเมื่อมีบัตรที่เลือก) -->
             <div class="print-report-section">
-                <button 
-                  @click="printReport(selectedTicketId, 'preview')" 
-                  class="action-btn report-preview"
-                  :disabled="!selectedTicketObject.WE_WEIGHTOUT"
-                >
-                  ดูรายงาน
-                </button>
-                <button 
-                  @click="printReport(selectedTicketId, 'print')" 
-                  class="action-btn report-print"
-                  :disabled="!selectedTicketObject.WE_WEIGHTOUT"
-                >
-                  พิมพ์รายงาน
-                </button>
+              <!-- หัวข้อส่วนพิมพ์รายงาน -->
+              <div class="print-section-header">
+                <span class="print-icon">📄</span>
+                <span class="report-type-indicator" v-if="selectedTicketDetail">
+                  ({{ getReportTypeText(selectedTicketDetail) }})
+                </span>
+              </div>
+              
+              <!-- ตัวเลือกการดำเนินการ -->
+              <div class="print-options">
+                <label class="print-option" :class="{ 'selected': printAction === 'preview' }">
+                  <input 
+                    type="radio" 
+                    v-model="printAction" 
+                    value="preview" 
+                    name="printAction"
+                  >
+                  <div class="option-content">
+                    <span class="option-icon">🔍</span>
+                    <span class="option-text">Preview</span>
+                  </div>
+                </label>
+                
+                <label class="print-option" :class="{ 'selected': printAction === 'print' }">
+                  <input 
+                    type="radio" 
+                    v-model="printAction" 
+                    value="print" 
+                    name="printAction"
+                  >
+                  <div class="option-content">
+                    <span class="option-icon">🖨️</span>
+                    <span class="option-text">พิมพ์</span>
+                  </div>
+                </label>
+                
+                <label class="print-option" :class="{ 'selected': printAction === 'download' }">
+                  <input 
+                    type="radio" 
+                    v-model="printAction" 
+                    value="download" 
+                    name="printAction"
+                  >
+                  <div class="option-content">
+                    <span class="option-icon">💾</span>
+                    <span class="option-text">ดาวน์โหลด</span>
+                  </div>
+                </label>
+              </div>
+              
+              <!-- ปุ่มดำเนินการ -->
+              <button 
+                class="action-btn print-btn"
+                @click="handlePrintReport"
+                :disabled="isPrintingReport || !printAction"
+              >
+                <span class="button-icon">
+                  {{ isPrintingReport ? '⏳' : (printAction === 'preview' ? '👁️' : printAction === 'print' ? '🖨️' : '💾') }}
+                </span>
+                {{ isPrintingReport ? 'กำลังดำเนินการ...' : (printAction === 'preview' ? 'ดูตัวอย่าง' : printAction === 'print' ? 'สั่งพิมพ์' : 'ดาวน์โหลด') }}
+              </button>
             </div>
 
           </div>
         </div>
+        <!-- ========================================================== -->
       </div>
 
       <div class="right-panel card">
+        <!-- Tabs สำหรับสลับมุมมอง -->
         <div class="date-filter-container">
           <label for="date-filter">📅 เลือกวันที่:</label>
-          <input type="date" id="date-filter" v-model="selectedDate" @change="onDateChanged">
+          <input type="date" id="date-filter" v-model="selectedDate">
         </div>
         <div class="tabs">
           <button :class="{ active: activeTab === 'inProgress' }" @click="activeTab = 'inProgress'">
@@ -1397,21 +1460,24 @@ async function printViaBackend(ticketId, reportType, hasItems) {
           </button>
         </div>
 
+        <!-- แสดงข้อความ Error ถ้ามี -->
         <div v-if="apiError" class="error-message">
           <span class="error-icon">🚨</span>
           {{ apiError }}
         </div>
 
+        <!-- ส่วนแสดงตาราง -->
         <div class="table-container" v-else>
+          <!-- ตารางสำหรับบัตรกำลังดำเนินการ -->
           <div v-show="activeTab === 'inProgress'">
             <table>
               <thead>
                 <tr>
-                  <th>เลขที่บัตร</th>
-                  <th>ทะเบียนรถ</th>
-                  <th>ประเภทรายงาน</th>
-                  <th>เวลาเข้า</th>
-                  <th>น้ำหนักเข้า (กก.)</th>
+                  <th>🎫 เลขที่บัตร</th>
+                  <th>🚗 ทะเบียนรถ</th>
+                  <th>👤 ชื่อลูกค้า</th>
+                  <th>⏰ เวลาชั่งเข้า</th>
+                  <th>⚖️ น้ำหนักชั่งเข้า (กก.)</th>
                 </tr>
               </thead>
               <tbody>
@@ -1422,11 +1488,16 @@ async function printViaBackend(ticketId, reportType, hasItems) {
                   :class="{ 'clickable-row': true, 'active-row': selectedTicketId === ticket.WE_ID }"
                   :data-ticket-id="ticket.WE_ID"
                 >
-                  <td>{{ ticket.WE_ID }}</td>
+                  <td>
+                    <button class="detail-btn" @click.stop="showTicketDetails(ticket.WE_ID)">
+                      <span class="detail-icon">🔍</span>
+                    </button>
+                    {{ ticket.WE_ID }}
+                  </td>
                   <td>{{ ticket.WE_LICENSE }}</td>
-                  <td>{{ getReportTypeText(ticket) }}</td>
-                  <td>{{ formatTime(ticket.WE_TIMEIN) }}</td>
-                  <td>{{ ticket.WE_WEIGHTIN.toLocaleString() }}</td>
+                  <td>{{ ticket.WE_VENDOR || '-' }}</td>
+                  <td>{{ new Date(ticket.WE_TIMEIN).toLocaleString('th-TH') }}</td>
+                  <td>{{ ticket.WE_WEIGHTIN.toLocaleString('en-US') }}</td>
                 </tr>
                 <tr v-if="!apiError && openTickets.length === 0">
                   <td colspan="5" class="empty-state">
@@ -1438,15 +1509,16 @@ async function printViaBackend(ticketId, reportType, hasItems) {
             </table>
           </div>
 
+          <!-- ตารางสำหรับบัตรที่เสร็จแล้ว -->
           <div v-show="activeTab === 'completed'">
             <table>
               <thead>
                 <tr>
-                  <th>เลขที่บัตร</th>
-                  <th>ทะเบียนรถ</th>
-                  <th>ประเภทรายงาน</th>
-                  <th>เวลาออก</th>
-                  <th>น้ำหนักสุทธิ (กก.)</th>
+                  <th>🎫 เลขที่บัตร</th>
+                  <th>🚗 ทะเบียนรถ</th>
+                  <th>👤 ชื่อลูกค้า</th>
+                  <th>⏰ เวลาชั่งออก</th>
+                  <th>⚖️ น้ำหนักสุทธิ (กก.)</th>
                 </tr>
               </thead>
               <tbody>
@@ -1457,16 +1529,21 @@ async function printViaBackend(ticketId, reportType, hasItems) {
                   :class="{ 'clickable-row': true, 'active-row': selectedTicketId === ticket.WE_ID }"
                   :data-ticket-id="ticket.WE_ID"
                 >
-                  <td>{{ ticket.WE_ID }}</td>
+                  <td>
+                    <button class="detail-btn" @click.stop="showTicketDetails(ticket.WE_ID)">
+                      <span class="detail-icon">🔍</span>
+                    </button>
+                    {{ ticket.WE_ID }}
+                  </td>
                   <td>{{ ticket.WE_LICENSE }}</td>
-                  <td>{{ getReportTypeText(ticket) }}</td>
-                  <td>{{ formatTime(ticket.WE_TIMEOUT) }}</td>
-                  <td>{{ ticket.WE_WEIGHTNET?.toLocaleString() || 'N/A' }}</td>
+                  <td>{{ ticket.WE_VENDOR || '-' }}</td>
+                  <td>{{ new Date(ticket.WE_TIMEOUT).toLocaleString('th-TH') }}</td>
+                  <td>{{ ticket.WE_WEIGHTNET?.toLocaleString('en-US') || '0' }}</td>
                 </tr>
                 <tr v-if="!apiError && completedTickets.length === 0">
                   <td colspan="5" class="empty-state">
                     <span class="empty-icon">📭</span>
-                    ไม่พบรายการ
+                    ไม่พบรายการของวันนี้
                   </td>
                 </tr>
               </tbody>
@@ -1476,31 +1553,24 @@ async function printViaBackend(ticketId, reportType, hasItems) {
       </div>
     </main>
     
+    <!-- Modal Component สำหรับแสดงรายละเอียด -->
     <TicketDetailModal 
-      :ticket="detailTicket" 
-      :isVisible="isModalVisible" 
-      @close="closeDetailModal"
-      @update-ticket="handleUpdateTicket" 
+      :ticket="detailTicket"
+      :visible="isModalVisible"
+      @close="closeModal"
+      @weigh-out="handleWeighOut"
+      @ticket-updated="handleTicketUpdate"
+      @view-ticket="handleViewTicket"
     />
-     <CreateTicketModal
-      :isVisible="isCreateModalVisible"
-      :initialWeight="initialWeightForNewTicket"
-      :carQueue="carQueue"
-      :branchPrefix="branchPrefix"
-      :continuousData="continuousWeighingData"
-      @close="closeCreateModal"
-      @create-ticket="createTicket"
+    <!-- *** เพิ่ม Prop ใหม่ 'continuousData' เข้าไป *** -->
+    <CreateTicketModal
+    :visible="isCreateModalVisible"
+    :initial-weight-in="initialWeightForNewTicket"
+    :car-queue="carQueue"
+    :continuous-data-from-prev-ticket="continuousWeighingData"
+    @close="isCreateModalVisible = false"
+    @ticket-created="handleTicketCreated"
     />
-    <OfflineDataModal
-      :isVisible="isOfflineModalVisible"
-      :apiUrl="API_BASE_URL"
-      :offlineApiUrl="API_OFFLINE_URL"
-      @close="isOfflineModalVisible = false"
-      @sync-completed="refreshAllData"
-    />
-     <button v-if="!isOnline" @click="isOfflineModalVisible = true" class="offline-sync-button">
-      📦 ดูข้อมูล Offline และ Sync
-    </button>
   </div>
 </template>
 
@@ -1509,15 +1579,21 @@ async function printViaBackend(ticketId, reportType, hasItems) {
 /* 1. CSS Variables & Global Styles              */
 /* =============================================== */
 :root {
-    --primary-color: #2563eb;
+    --primary-color: #2563eb; /* สีน้ำเงินเข้ม */
     --primary-hover: #1d4ed8;
     --secondary-color: #64748b;
-    --success-color: #059669;
-    --danger-color: #dc2626;
-    --info-color: #0891b2;
+    --success-color: #059669; /* สีเขียว */
+    --success-hover: #047857;
+    --warning-color: #d97706; /* สีส้ม */
+    --warning-hover: #b45309;
+    --danger-color: #dc2626; /* สีแดง */
+    --danger-hover: #b91c1c;
+    --info-color: #0891b2; /* สีฟ้า */
+    --info-hover: #0e7490;
     --bg-color: #f8fafc;
     --text-color: #1e293b;
     --card-bg: #ffffff;
+    --error-color: #dc2626;
     --highlight-color: #dbeafe;
     --border-color: #e2e8f0;
     --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
@@ -1530,13 +1606,38 @@ html, body, #app {
     height: 100%;
     overflow: hidden;
     background-color: var(--bg-color);
-    font-family: 'Tahoma', sans-serif;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     color: var(--text-color);
 }
-::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
-::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Global button styles */
+button {
+  transition: all 0.2s ease-in-out;
+}
+
+button:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
 
 /* =============================================== */
 /* 2. Main Layout (โครงสร้างหลัก)                 */
@@ -1545,7 +1646,9 @@ html, body, #app {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  background-color: var(--bg-color);
 }
+
 main {
   display: flex;
   gap: 1.5rem;
@@ -1553,6 +1656,7 @@ main {
   flex-grow: 1;
   overflow: hidden;
 }
+
 .left-panel {
   display: flex;
   flex-direction: column;
@@ -1562,12 +1666,17 @@ main {
   overflow-y: auto;
   padding-right: 10px;
 }
+
 .right-panel {
   flex-grow: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
+
+/* =============================================== */
+/* 3. Reusable Components                          */
+/* =============================================== */
 .card {
   background-color: var(--card-bg);
   padding: 1.5rem;
@@ -1575,35 +1684,68 @@ main {
   box-shadow: var(--shadow);
   border: 1px solid var(--border-color);
 }
+
 .divider {
   border: none;
-  border-top: 1px solid var(--border-color);
+  border-top: 2px solid var(--border-color);
   margin: 0.5rem 0;
 }
+
 .error-message {
-  color: var(--danger-color);
+  color: var(--error-color);
   background-color: #fef2f2;
   border: 1px solid #fecaca;
   padding: 1rem;
   border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+}
+
+.error-icon {
+  font-size: 1.2rem;
 }
 
 /* =============================================== */
 /* 4. Left Panel Components                        */
 /* =============================================== */
+
 .weight-display-container {
   position: relative;
 }
+
 .weight-display {
+  font-size: 12rem;
   font-weight: bold;
   color: var(--primary-color);
   background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
   padding: 2rem;
   border-radius: 16px;
   text-align: center; 
-  border: 1px solid #bae6fd;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+  line-height: 1;
+  border: 2px solid #bae6fd;
+  position: relative;
 }
-.weight-unit { font-size: 1.2rem; margin-top: 0.5rem; }
+
+.weight-icon {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+  opacity: 0.8;
+}
+
+.weight-unit {
+  font-size: 1.2rem;
+  color: var(--secondary-color);
+  margin-top: 0.5rem;
+  font-weight: 500;
+}
+
 .connection-status {
   position: absolute;
   top: 1rem;
@@ -1611,22 +1753,173 @@ main {
   padding: 0.5rem 1rem;
   border-radius: 20px;
   font-size: 0.8rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+}
+
+.connection-status.connected {
+  color: var(--success-color);
+  background-color: #f0fdf4;
+}
+
+.connection-status.connecting,
+.connection-status.disconnected {
+  color: var(--warning-color);
+  background-color: #fffbeb;
+}
+
+.connection-status.connection-error {
+  color: var(--danger-color);
+  background-color: #fef2f2;
+}
+
+.status-icon {
+  font-size: 0.9rem;
+}
+
+.action-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.selected-ticket-info {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.selected-ticket-info label {
+  font-weight: 600;
+  display: block;
+  font-size: 0.9rem;
+  color: var(--secondary-color);
+  margin-bottom: 0.5rem;
+}
+
+.ticket-id-display {
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: var(--primary-color);
+  background-color: #eff6ff;
+  padding: 0.8rem;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  border: 1px solid #bfdbfe;
 }
-.status-indicator {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-.connection-status.connected { color: var(--success-color); background-color: #f0fdf4; }
-.connection-status.connected .status-indicator { background-color: var(--success-color); }
-.connection-status.disconnected { color: #d97706; background-color: #fffbeb; }
-.connection-status.disconnected .status-indicator { background-color: #d97706; }
-.connection-status.offline { color: #4b5563; background-color: #f3f4f6; }
-.connection-status.offline .status-indicator { background-color: #4b5563; }
 
+.ticket-icon {
+  font-size: 1.2rem;
+}
+
+.license-text {
+  color: var(--secondary-color);
+  font-size: 0.9rem;
+}
+
+.no-ticket-selected {
+  font-style: italic;
+  color: var(--secondary-color);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  background-color: #f8fafc;
+  border-radius: 8px;
+  border: 1px dashed var(--border-color);
+}
+
+.no-selection-icon {
+  font-size: 1.1rem;
+}
+
+/* ======================================== */
+/*  Styles for the New Action Panel         */
+/* ======================================== */
+
+.action-buttons-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.action-btn {
+  width: 100%;
+  padding: 0.75rem 0.5rem;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.action-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.button-icon {
+  font-size: 1rem;
+}
+
+/* Detail Button (Blue) */
+.action-btn.detail-btn {
+  background: linear-gradient(135deg, var(--info-color) 0%, var(--info-hover) 100%);
+}
+
+.action-btn.detail-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--info-hover) 0%, #0c4a6e 100%);
+}
+
+/* Cancel Button (Gray) */
+.action-btn.cancel-btn {
+  background: linear-gradient(135deg, var(--secondary-color) 0%, #475569 100%);
+}
+
+.action-btn.cancel-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #475569 0%, #334155 100%);
+}
+
+/* Weigh-out Button (Green) */
+.action-btn.weigh-out-btn {
+  background: linear-gradient(135deg, var(--success-color) 0%, var(--success-hover) 100%);
+  grid-column: 1 / -1;
+}
+
+.action-btn.weigh-out-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--success-hover) 0%, #065f46 100%);
+}
+
+/* Continuous Weighing Button (Purple) */
+.action-btn.continuous-btn {
+  background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+  grid-column: 1 / -1;
+}
+
+.action-btn.continuous-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #6d28d9 0%, #5b21b6 100%);
+}
 
 .create-ticket-button {
   width: 100%;
@@ -1637,42 +1930,20 @@ main {
   font-size: 1.1rem;
   font-weight: 600;
   cursor: pointer;
+  transition: all 0.2s ease-in-out;
   background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-hover) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: var(--shadow);
 }
-.action-panel { display: flex; flex-direction: column; gap: 1rem; }
-.selected-ticket-info {
-  background: #f8fafc;
-  padding: 1rem;
-  border-radius: 8px;
-  border: 1px solid var(--border-color);
-}
-.ticket-id-display { font-weight: 600; font-size: 1.1rem; color: var(--primary-color); }
-.no-ticket-selected { font-style: italic; color: var(--secondary-color); }
-.action-buttons-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 
-.action-btn {
-  width: 100%;
-  padding: 0.75rem 0.5rem;
-  border: none;
-  border-radius: 8px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
-  color: white;
+.create-ticket-button:hover {
+  background: linear-gradient(135deg, var(--primary-hover) 0%, #1e40af 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px rgba(37, 99, 235, 0.3);
 }
-.action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.detail-btn { background-color: var(--info-color); }
-.cancel-btn { background-color: var(--secondary-color); }
-.weigh-out-btn { background-color: var(--success-color); grid-column: 1 / -1; }
-.continuous-btn { background-color: #7c3aed; grid-column: 1 / -1; }
-.print-report-section {
-    grid-column: 1 / -1;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-}
-.report-preview { background-color: #f0f0f0; color: #333; }
-.report-print { background-color: #e0e0e0; color: #333; }
 
 /* =============================================== */
 /* 5. Right Panel Components                       */
@@ -1683,49 +1954,353 @@ main {
   gap: 0.5rem;
   margin-bottom: 1rem;
   padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 2px solid var(--border-color);
   flex-shrink: 0;
 }
+
+.date-filter-container label {
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.date-filter-container input[type="date"] {
+  padding: 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 1rem;
+  background-color: white;
+  transition: border-color 0.2s;
+}
+
+.date-filter-container input[type="date"]:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
 .tabs {
   display: flex;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 2px solid var(--border-color);
   margin-bottom: 1rem;
   flex-shrink: 0;
 }
+
 .tabs button {
-  padding: 0.75rem 1.25rem;
+  padding: 1rem 1.5rem;
   border: none;
   background-color: transparent;
   cursor: pointer;
-  border-bottom: 3px solid transparent;
+  font-size: 1rem;
+  color: var(--secondary-color);
+  position: relative;
+  top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease-in-out;
+  border-radius: 8px 8px 0 0;
 }
+
+.tabs button:hover {
+  background-color: #f1f5f9;
+  color: var(--primary-color);
+}
+
 .tabs button.active {
   border-bottom: 3px solid var(--primary-color);
   font-weight: 600;
   color: var(--primary-color);
+  background-color: #eff6ff;
 }
-.table-container { flex-grow: 1; overflow-y: auto; min-height: 0; }
-table { width: 100%; border-collapse: collapse; }
-th, td { padding: 0.75rem; border-bottom: 1px solid var(--border-color); text-align: left; white-space: nowrap; }
-th { background-color: #f8fafc; position: sticky; top: 0; }
-.clickable-row { cursor: pointer; }
-.clickable-row:hover { background-color: #f8fafc; }
-.active-row { background: var(--highlight-color) !important; font-weight: 600; }
-.empty-state { text-align: center; padding: 2rem; color: var(--secondary-color); }
 
-.offline-sync-button {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  z-index: 1000;
-  padding: 12px 20px;
-  background-color: #ff9800;
+.tab-icon {
+  font-size: 1.1rem;
+}
+
+/* --- Table Styles --- */
+.table-container {
+  flex-grow: 1;
+  overflow-y: auto;
+  min-height: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background-color: white;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, td {
+  padding: 1rem;
+  border-bottom: 1px solid var(--border-color);
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  position: sticky;
+  top: 0;
+  font-weight: 600;
+  color: var(--text-color);
+  border-bottom: 2px solid var(--border-color);
+}
+
+.clickable-row {
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+
+.clickable-row:hover {
+  background-color: #f8fafc;
+  transform: translateX(2px);
+}
+
+.active-row {
+  background: linear-gradient(135deg, var(--highlight-color) 0%, #bfdbfe 100%) !important;
+  font-weight: 600;
+  border-left: 4px solid var(--primary-color);
+}
+
+.detail-btn {
+  margin-right: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  background: linear-gradient(135deg, var(--info-color) 0%, var(--info-hover) 100%);
   color: white;
   border: none;
-  border-radius: 25px;
+  border-radius: 4px;
+  transition: all 0.2s ease-in-out;
+}
+
+.detail-btn:hover {
+  background: linear-gradient(135deg, var(--info-hover) 0%, #0c4a6e 100%);
+  transform: scale(1.05);
+}
+
+.detail-icon {
+  font-size: 0.8rem;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: var(--secondary-color);
+  font-style: italic;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.empty-icon {
+  font-size: 1.5rem;
+}
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+  .left-panel {
+    width: 320px;
+  }
+  
+  .weight-display {
+    font-size: 4rem;
+    padding: 1.5rem;
+  }
+}
+
+@media (max-width: 768px) {
+  main {
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+  }
+  
+  .left-panel {
+    width: 100%;
+  }
+  
+  .action-buttons-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .weight-display {
+    font-size: 3rem;
+    padding: 1rem;
+  }
+}
+
+/* เพิ่ม CSS สำหรับ highlight บรรทัดที่เลือก */
+.selected-row {
+  background-color: var(--highlight-color) !important;
+  border-left: 4px solid var(--primary-color);
+}
+
+.ticket-row {
   cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.ticket-row:hover {
+  background-color: #f1f5f9;
+}
+
+/* Print Report Section - ปรับปรุงใหม่ */
+.print-report-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.8rem;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  margin-top: 0.5rem;
+}
+
+.print-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.print-icon {
   font-size: 1rem;
-  font-weight: bold;
-  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.print-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.report-type-indicator {
+  font-size: 0.75rem;
+  color: var(--primary-color);
+  font-weight: 500;
+  margin-left: 0.3rem;
+}
+
+.print-options {
+  display: flex;
+  gap: 0.3rem;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.print-option {
+  flex: 1;
+  min-width: 80px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 0.4rem;
+  border-radius: 6px;
+  background: white;
+  border: 1px solid var(--border-color);
+  transition: all 0.2s ease-in-out;
+  position: relative;
+  overflow: hidden;
+}
+
+.print-option:hover {
+  border-color: var(--primary-color);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.15);
+}
+
+.print-option.selected {
+  border-color: var(--primary-color);
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
+}
+
+.print-option input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.option-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  width: 100%;
+  text-align: center;
+}
+
+.option-icon {
+  font-size: 1rem;
+  margin-bottom: 0.15rem;
+}
+
+.option-text {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.print-option.selected .option-text {
+  color: var(--primary-color);
+}
+
+/* ปุ่มดำเนินการ */
+.print-btn {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  border: none;
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  box-shadow: 0 2px 4px rgba(245, 158, 11, 0.3);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.print-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(245, 158, 11, 0.4);
+}
+
+.print-btn:disabled {
+  background: linear-gradient(135deg, #9ca3af 0%, #6b7280 100%);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Responsive Design สำหรับส่วนพิมพ์รายงาน */
+@media (max-width: 768px) {
+  .print-options {
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  
+  .print-option {
+    padding: 0.6rem;
+  }
+  
+  .option-content {
+    flex-direction: row;
+    justify-content: flex-start;
+    text-align: left;
+    gap: 0.5rem;
+  }
+  
+  .option-icon {
+    margin-bottom: 0;
+  }
 }
 </style>

@@ -16,6 +16,10 @@ import sys
 from PIL import Image, ImageTk
 import pystray
 from pystray import MenuItem as item
+import sqlite3  # เพิ่ม import สำหรับ SQLite
+import csv  # เพิ่ม import สำหรับ CSV export
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import uuid  # เพิ่ม uuid สำหรับสร้าง ID ชั่วคราว
 
 # Configuration
 CLIENT_CONFIG_FILE = "client_config.ini"
@@ -110,7 +114,7 @@ class RS232ClientGUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(f"RS232 Scale Client - {CLIENT_ID}")
-        self.root.geometry("1000x780")  # เพิ่มขนาดเพื่อรองรับ Real-time monitoring
+        self.root.geometry("1000x800")  # เพิ่มขนาดเพื่อรองรับ Offline Mode
         self.root.configure(bg='#f0f0f0')
         
         # Client variables
@@ -132,6 +136,9 @@ class RS232ClientGUI:
         # Sensitivity variable
         self.sensitivity = DEFAULT_SENSITIVITY
         
+        # เพิ่ม Local Data Manager
+        self.local_data_manager = LocalDataManager()
+        
         # GUI variables
         self.port_var = tk.StringVar(value=self.serial_config['port'])
         self.baudrate_var = tk.StringVar(value=str(self.serial_config['baudrate']))
@@ -148,10 +155,19 @@ class RS232ClientGUI:
         self.custom_pattern_prefix_var = tk.StringVar(value="CUSTOM3")
         self.custom_pattern_regex_var = tk.StringVar(value=r"CUSTOM3\s+(\d+)")
         self.custom_pattern_is_zero_var = tk.BooleanVar(value=False)
-
+        
+        # เพิ่ม Local Web Server
+        self.local_web_server = LocalWebServer(self)
+        
         # สร้าง UI ก่อน
         self.setup_ui()
         self.update_available_ports()
+        
+        # เพิ่ม Offline Mode UI
+        self.offline_ui = OfflineModeUI(self.root)
+        
+        # เพิ่ม Connection Monitor
+        self.connection_monitor = ConnectionMonitor(self)
         
         # โหลดค่า sensitivity จาก config
         self.sensitivity = self.serial_config.get('sensitivity', DEFAULT_SENSITIVITY)
@@ -828,64 +844,54 @@ class RS232ClientGUI:
 
     
     def add_realtime_data(self, data_bytes):
-        """เพิ่มข้อมูลลงใน real-time buffer (เรียกจากฟังก์ชันอื่น)"""
+        """เพิ่มข้อมูล real-time ลงใน buffer"""
         try:
-            if not self.realtime_monitoring_active:
-                return
-                
-            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            
-            # แปลงข้อมูลเป็นรูปแบบที่อ่านได้
-            hex_data = data_bytes.hex(' ').upper()
+            # แปลงข้อมูลเป็นรูปแบบต่างๆ
+            hex_data = ' '.join([f'{b:02X}' for b in data_bytes])
             ascii_data = ''.join([chr(b) if 32 <= b <= 126 else '.' for b in data_bytes])
             decimal_data = ' '.join([str(b) for b in data_bytes])
             
-            # สร้างข้อมูลสำหรับแสดง
-            data_entry = {
-                'timestamp': timestamp,
+            # สร้าง entry ใหม่
+            entry = {
+                'timestamp': datetime.now().strftime('%H:%M:%S.%f')[:-3],
+                'length': len(data_bytes),
                 'hex': hex_data,
                 'ascii': ascii_data,
-                'decimal': decimal_data,
-                'length': len(data_bytes)
+                'decimal': decimal_data
             }
             
-            # เพิ่มข้อมูลลงใน buffer
-            self.realtime_data_buffer.append(data_entry)
+            # เพิ่มลงใน buffer
+            self.realtime_data_buffer.append(entry)
             
-            # จำกัดจำนวนบรรทัด
+            # จำกัดขนาด buffer
             max_lines = int(self.max_lines_var.get())
             if len(self.realtime_data_buffer) > max_lines:
                 self.realtime_data_buffer = self.realtime_data_buffer[-max_lines:]
             
-            # อัปเดตการแสดงผลทันที
+            # อัปเดตการแสดงผล
             self.update_realtime_text()
             
-            # อัปเดตข้อมูลสถิติ
-            total_bytes = sum(entry['length'] for entry in self.realtime_data_buffer)
-            self.realtime_info_label.config(
-                text=f"📊 Monitoring: {len(self.realtime_data_buffer)} packets, {total_bytes} bytes received",
-                foreground='green'
-            )
+            # Auto-scroll ถ้าเปิดใช้งาน
+            if self.auto_scroll_var.get():
+                self.realtime_text.see(tk.END)
             
-            # ลอง parse ข้อมูลและอัปเดต weight label
+            # ลอง parse ข้อมูลใหม่
             try:
-                decoded = data_bytes.decode('latin-1', errors='ignore').strip()
-                if decoded:
-                    # แยกข้อมูลตามบรรทัด
-                    lines = []
-                    for line in decoded.split('\r\n'):
-                        lines.extend(line.split('\n'))
-                    
-                    # ตรวจสอบทุกบรรทัด
-                    for line in lines:
-                        line = line.strip()
-                        if line:
-                            parsed_value = self.parse_scale_data(line)
-                            if parsed_value != "N/A":
-                                self.last_weight = parsed_value
-                                self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
-                                # ไม่ log ทุกครั้งเพื่อลด spam
-                                break
+                decoded = data_bytes.decode('latin-1', errors='ignore')
+                lines = []
+                for line in decoded.split('\r\n'):
+                    lines.extend(line.split('\n'))
+                
+                # ตรวจสอบทุกบรรทัด
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        parsed_value = self.parse_scale_data(line)
+                        if parsed_value != "N/A":
+                            self.last_weight = parsed_value
+                            self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                            # ไม่ log ทุกครั้งเพื่อลด spam
+                            break
             except Exception as e:
                 # ไม่เป็นไรถ้า parse ไม่ได้
                 pass
@@ -1017,6 +1023,8 @@ class RS232ClientGUI:
             print(f"Bytesize key error: {e}")
             return '8'
         
+    # ... existing code ...
+
     def load_config(self):
         """โหลด config จากไฟล์"""
         try:
@@ -1051,7 +1059,8 @@ class RS232ClientGUI:
             for config_path in config_paths:
                 if os.path.exists(config_path):
                     try:
-                        config.read(config_path)
+                        # แก้ไขปัญหา encoding โดยระบุ encoding เป็น utf-8
+                        config.read(config_path, encoding='utf-8')
                         if 'SerialConfig' in config:
                             cfg_section = config['SerialConfig']
                             loaded_settings['port'] = cfg_section.get('Port', DEFAULT_SERIAL_PORT)
@@ -1110,6 +1119,8 @@ class RS232ClientGUI:
                 'timeout': DEFAULT_READ_TIMEOUT,
                 'sensitivity': DEFAULT_SENSITIVITY
             }
+
+# ... existing code ...
         
     def save_configuration(self):
         """บันทึกการตั้งค่า"""
@@ -1545,13 +1556,116 @@ class RS232ClientGUI:
             if extracted_weight_values:
                 non_zero_values = [val for val in extracted_weight_values if val != "0" and val != "0.0"]
                 if non_zero_values:
-                    return non_zero_values[-1]
+                    weight_result = non_zero_values[-1]
+                    # บันทึกใน Local Database
+                    self.save_weight_locally(weight_result)
+                    return weight_result
                 elif "0" in extracted_weight_values or "0.0" in extracted_weight_values:
-                    return "0"
+                    weight_result = "0"
+                    # บันทึกใน Local Database
+                    self.save_weight_locally(weight_result)
+                    return weight_result
             return "N/A"
         except Exception as e:
             self.log_message(f"Parse error: {e}")
             return "N/A"
+
+    def save_weight_locally(self, weight):
+        """บันทึกน้ำหนักใน Local Database"""
+        try:
+            record_id = self.local_data_manager.save_weight_locally(
+                weight, 
+                "local",
+                self.branch_var.get(),
+                self.scale_pattern_var.get()
+            )
+            if record_id:
+                # อัปเดต Local UI
+                self.offline_ui.update_local_data_display()
+        except Exception as e:
+            self.log_message(f"Error saving weight locally: {e}")
+
+    def send_offline_data_to_server(self, record):
+        """ส่งข้อมูลจาก Local ไป Server"""
+        try:
+            if self.websocket and not self.websocket.closed:
+                message = {
+                    "client_id": self.client_id_var.get(),
+                    "weight": str(record[1]),  # weight
+                    "timestamp": time.time(),
+                    "branch": record[4] if record[4] else self.branch_var.get(),
+                    "branch_prefix": self.get_branch_prefix(record[4] if record[4] else self.branch_var.get()),
+                    "scale_pattern": record[5] if record[5] else self.scale_pattern_var.get(),
+                    "offline_sync": True  # แสดงว่าเป็นข้อมูลจาก offline sync
+                }
+                
+                # ส่งข้อมูลแบบ async
+                asyncio.run_coroutine_threadsafe(
+                    self.websocket.send(json.dumps(message)), 
+                    self.loop
+                )
+                
+                # ทำเครื่องหมายว่า sync แล้ว
+                self.local_data_manager.mark_as_synced(record[0])
+                
+                # อัปเดต Local UI
+                self.offline_ui.update_local_data_display()
+                
+                self.log_message(f"Synced offline data: {record[1]} kg")
+                
+        except Exception as e:
+            self.log_message(f"Error syncing offline data: {e}")
+
+    def show_local_data_window(self):
+        """แสดงหน้าต่างข้อมูล Local"""
+        try:
+            # สร้างหน้าต่างใหม่
+            local_window = tk.Toplevel(self.root)
+            local_window.title("Local Weight Data")
+            local_window.geometry("800x600")
+            
+            # สร้าง Treeview สำหรับแสดงข้อมูล
+            columns = ('ID', 'Weight', 'Timestamp', 'Status', 'Branch', 'Scale Pattern', 'Synced')
+            tree = ttk.Treeview(local_window, columns=columns, show='headings')
+            
+            # กำหนดหัวข้อคอลัมน์
+            for col in columns:
+                tree.heading(col, text=col)
+                tree.column(col, width=100)
+            
+            # ดึงข้อมูลจาก Local Database
+            conn = sqlite3.connect(self.local_data_manager.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, weight, timestamp, status, branch, scale_pattern, synced
+                FROM weight_records
+                ORDER BY timestamp DESC
+                LIMIT 100
+            ''')
+            
+            data = cursor.fetchall()
+            conn.close()
+            
+            # เพิ่มข้อมูลใน Treeview
+            for row in data:
+                synced_text = "Yes" if row[6] else "No"
+                tree.insert('', 'end', values=(row[0], row[1], row[2], row[3], row[4], row[5], synced_text))
+            
+            # เพิ่ม Scrollbar
+            scrollbar = ttk.Scrollbar(local_window, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=scrollbar.set)
+            
+            # จัดวาง
+            tree.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            
+            # แสดงจำนวนข้อมูล
+            info_label = ttk.Label(local_window, text=f"Showing {len(data)} records")
+            info_label.pack(pady=5)
+            
+        except Exception as e:
+            self.log_message(f"Error showing local data window: {e}")
+            messagebox.showerror("Error", f"Error showing local data: {e}")
 
     def read_weight_from_rs232(self):
         """อ่านน้ำหนักจาก RS232"""
@@ -1591,6 +1705,9 @@ class RS232ClientGUI:
                 except Exception as e:
                     self.log_message(f"Error processing trimmed buffer: {e}")
             
+            # อ่านข้อมูลที่มีอยู่ใน buffer
+            # ... existing code ...
+
             # อ่านข้อมูลที่มีอยู่ใน buffer
             if ser.in_waiting > 0:
                 try:
@@ -1632,6 +1749,8 @@ class RS232ClientGUI:
                             self.log_message(f"Buffer data: {len(new_bytes)} bytes")
                 except Exception as e:
                     self.log_message(f"Error reading buffer: {e}")
+
+# ... existing code ...
             
             # ลองอ่านข้อมูลใหม่ (non-blocking read)
             try:
@@ -1777,6 +1896,8 @@ class RS232ClientGUI:
             except Exception as reset_error:
                 self.log_message(f"Error resetting serial buffers: {reset_error}")
             return "Error"
+
+# ... existing code ...
     def start_client(self):
         """เริ่มต้น client"""
         if self.is_running:
@@ -1790,6 +1911,12 @@ class RS232ClientGUI:
         self.is_running = True
         self.start_btn.config(state='disabled')
         self.stop_btn.config(state='normal')
+        
+        # เริ่ม Local Web Server
+        self.local_web_server.start_server()
+        
+        # เริ่ม Local API Server
+        self.local_api_server.start_server()
         
         # เริ่ม thread สำหรับการทำงาน
         self.client_thread = threading.Thread(target=self.run_client_async, daemon=True)
@@ -1838,6 +1965,8 @@ class RS232ClientGUI:
         except Exception as e:
             self.log_message(f"Raw reading test error: {e}")
                 
+    # ... existing code ...
+
     def stop_client(self):
         """หยุด client"""
         try:
@@ -1845,6 +1974,12 @@ class RS232ClientGUI:
             
             self.is_running = False
             self.is_connected = False
+            
+            # หยุด Local Web Server
+            self.local_web_server.stop_server()
+            
+            # หยุด Local API Server
+            self.local_api_server.stop_server()
             
             # หยุด real-time monitoring
             if self.realtime_monitoring_active:
@@ -1857,7 +1992,7 @@ class RS232ClientGUI:
                     self.log_message("Serial connection closed")
                 except Exception as e:
                     self.log_message(f"Error closing serial connection: {e}")
-            
+                
             # ปิด WebSocket
             if self.websocket and self.loop:
                 try:
@@ -1886,6 +2021,8 @@ class RS232ClientGUI:
             self.is_connected = False
             self.start_btn.config(state='normal')
             self.stop_btn.config(state='disabled')
+
+# ... existing code ...
     
     def load_additional_config(self):
         """โหลด config เพิ่มเติมหลังจากสร้าง GUI แล้ว"""
@@ -1967,6 +2104,8 @@ class RS232ClientGUI:
                 server_url = self.server_url_var.get()
                 client_id = self.client_id_var.get()
                 
+                # ... existing code ...
+
                 self.log_message(f"Connecting to server {server_url}")
                 
                 # สร้าง WebSocket connection
@@ -2011,7 +2150,7 @@ class RS232ClientGUI:
                 self.server_status_label.config(text="🔴 Server: Invalid URL")
                 await asyncio.sleep(10)  # รอนานขึ้นสำหรับ URL ที่ผิด
                 continue
-                
+                    
             except Exception as e:
                 self.log_message(f"Connection error: {e}")
                 self.is_connected = False
@@ -2024,6 +2163,8 @@ class RS232ClientGUI:
                 
                 # เพิ่ม delay แบบ exponential backoff
                 reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
+
+# ... existing code ...
                 
     async def send_weight_loop(self, client_id):
         """ลูปสำหรับส่งข้อมูลน้ำหนัก"""
@@ -2067,6 +2208,8 @@ class RS232ClientGUI:
                     "scale_pattern": self.scale_pattern_var.get()
                 }
                 
+                # ... existing code ...
+
                 try:
                     # ตรวจสอบ WebSocket state ก่อนส่ง
                     if self.websocket and not self.websocket.closed:
@@ -2106,6 +2249,8 @@ class RS232ClientGUI:
                     break
                 
                 await asyncio.sleep(1.0)  # รอเวลานานขึ้นเมื่อเกิด error
+
+# ... existing code ...
 
         
     def test_raw_data_display(self):
@@ -2186,16 +2331,14 @@ class RS232ClientGUI:
         except Exception as e:
             print(f"GUI error: {e}")
     
+    # ... existing code ...
+
     def on_closing(self):
-        """จัดการเมื่อปิดโปรแกรม"""
+        """เมื่อปิดโปรแกรม"""
         try:
             self.log_message("Shutting down application...")
             
-            # หยุด real-time monitoring
-            if self.realtime_monitoring_active:
-                self.toggle_realtime_monitoring()
-            
-            # หยุด client ถ้ากำลังทำงาน
+            # หยุด client
             if self.is_running:
                 self.stop_client()
             
@@ -2207,20 +2350,20 @@ class RS232ClientGUI:
                     print(f"Error stopping tray icon: {e}")
             
             # ปิดการเชื่อมต่อ Serial
-            if self.serial_connection and self.serial_connection.is_open:
+            if self.serial_connection:
                 try:
                     self.serial_connection.close()
-                    self.log_message("Serial connection closed")
                 except Exception as e:
                     print(f"Error closing serial connection: {e}")
             
             # ล้าง buffer
             self.read_buffer = b''
             
-            self.log_message("Application shutdown complete")
-            
             # ปิดโปรแกรม
-            self.root.destroy()
+            try:
+                self.root.destroy()
+            except Exception as e:
+                print(f"Error destroying root: {e}")
         except Exception as e:
             print(f"Closing error: {e}")
             try:
@@ -2228,12 +2371,23 @@ class RS232ClientGUI:
             except:
                 pass
 
+# ... existing code ...
+
     def open_frontend(self):
         """เปิดหน้าเว็บ Frontend"""
         try:
-            self.log_message(f"Opening frontend: {FRONTEND_URL}")
-            webbrowser.open(FRONTEND_URL)
-            messagebox.showinfo("Frontend", f"Opening frontend in browser:\n{FRONTEND_URL}")
+            # ตรวจสอบสถานะการเชื่อมต่อ
+            if self.is_offline_mode:
+                # เปิด Local Dashboard
+                local_url = f"http://localhost:{self.local_web_server.port}"
+                self.log_message(f"Opening local dashboard: {local_url}")
+                webbrowser.open(local_url)
+                messagebox.showinfo("Local Dashboard", f"Opening local dashboard:\n{local_url}\n\nThis shows data from local storage.")
+            else:
+                # เปิด Frontend ปกติ
+                self.log_message(f"Opening frontend: {FRONTEND_URL}")
+                webbrowser.open(FRONTEND_URL)
+                messagebox.showinfo("Frontend", f"Opening frontend in browser:\n{FRONTEND_URL}")
         except Exception as e:
             self.log_message(f"Error opening frontend: {e}")
             messagebox.showerror("Error", f"Failed to open frontend: {e}")
@@ -2463,6 +2617,1847 @@ class RS232ClientGUI:
         x = (help_window.winfo_screenwidth() // 2) - (help_window.winfo_width() // 2)
         y = (help_window.winfo_screenheight() // 2) - (help_window.winfo_height() // 2)
         help_window.geometry(f"+{x}+{y}")
+
+# เพิ่ม Local Data Manager Class
+class LocalDataManager:
+    def __init__(self, db_path='local_weight_data.db'):
+        self.db_path = db_path
+        self.conn = None
+        self.connect()
+        self.create_tables()
+
+    def connect(self):
+        """เชื่อมต่อฐานข้อมูล SQLite"""
+        try:
+            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self.conn.row_factory = sqlite3.Row # ทำให้เข้าถึงคอลัมน์ด้วยชื่อได้
+        except Exception as e:
+            print(f"Error connecting to local DB: {e}")
+
+    def create_tables(self):
+        """สร้างตารางถ้ายังไม่มี"""
+        try:
+            cursor = self.conn.cursor()
+            # ตารางสำหรับเก็บข้อมูลน้ำหนัก (ตารางเดิม)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS weight_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    weight TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT,
+                    branch TEXT,
+                    scale_pattern TEXT,
+                    synced BOOLEAN DEFAULT 0
+                )
+            ''')
+            
+            # --- เพิ่มตารางใหม่สำหรับ Tickets ---
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS tickets (
+                    WE_ID TEXT PRIMARY KEY,
+                    WE_LICENSE TEXT,
+                    WE_WEIGHTIN REAL,
+                    WE_WEIGHTOUT REAL,
+                    WE_TIMEIN TEXT,
+                    WE_TIMEOUT TEXT,
+                    WE_DATE TEXT,
+                    WE_VENDOR_CD TEXT,
+                    WE_VENDOR TEXT,
+                    WE_DIREF TEXT,
+                    WE_MAT_CD TEXT,
+                    WE_MAT TEXT,
+                    WE_QTY REAL,
+                    WE_UOM TEXT,
+                    WE_DRIVER TEXT,
+                    WE_TRUCK_CHAR TEXT,
+                    WE_WEIGHTMINUS REAL,
+                    WE_WEIGHTIN_ORI REAL,
+                    WE_WEIGHTOUT_ORI REAL,
+                    WE_WEIGHTTOT REAL,
+                    WE_WEIGHTNET REAL,
+                    sync_status TEXT DEFAULT 'new', -- 'new', 'updated', 'synced'
+                    server_id TEXT -- เอาไว้เก็บ ID จริงจาก Server หลัง Sync
+                )
+            ''')
+
+            # --- เพิ่มตารางใหม่สำหรับ Ticket Items ---
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ticket_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticket_id TEXT,
+                    VBELN TEXT,
+                    POSNR TEXT,
+                    WE_MAT_CD TEXT,
+                    WE_MAT TEXT,
+                    WE_QTY REAL,
+                    WE_UOM TEXT,
+                    FOREIGN KEY(ticket_id) REFERENCES tickets(WE_ID)
+                )
+            ''')
+
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error creating tables: {e}")
+
+    def save_weight_locally(self, weight, status="local", branch="", scale_pattern=""):
+        """บันทึกน้ำหนักใน Local Database"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO weight_records (weight, status, synced, branch, scale_pattern)
+                VALUES (?, ?, 0, ?, ?)
+            ''', (weight, status, branch, scale_pattern))
+            conn.commit()
+            conn.close()
+            return cursor.lastrowid
+        except Exception as e:
+            print(f"Error saving weight locally: {e}")
+            return None
+    
+    def get_unsynced_data(self):
+        """ดึงข้อมูลที่ยังไม่ได้ sync"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, weight, timestamp, status, branch, scale_pattern
+                FROM weight_records 
+                WHERE synced = 0 
+                ORDER BY timestamp
+            ''')
+            data = cursor.fetchall()
+            conn.close()
+            return data
+        except Exception as e:
+            print(f"Error getting unsynced data: {e}")
+            return []
+    
+    def mark_as_synced(self, record_id):
+        """ทำเครื่องหมายว่า sync แล้ว"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE weight_records 
+                SET synced = 1 
+                WHERE id = ?
+            ''', (record_id,))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Error marking as synced: {e}")
+    
+    def get_local_stats(self):
+        """ดึงสถิติข้อมูล Local"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # นับจำนวนทั้งหมด
+            cursor.execute('SELECT COUNT(*) FROM weight_records')
+            total_records = cursor.fetchone()[0]
+            
+            # นับจำนวนที่ sync แล้ว
+            cursor.execute('SELECT COUNT(*) FROM weight_records WHERE synced = 1')
+            synced_records = cursor.fetchone()[0]
+            
+            # นับจำนวนที่ยังไม่ได้ sync
+            cursor.execute('SELECT COUNT(*) FROM weight_records WHERE synced = 0')
+            unsynced_records = cursor.fetchone()[0]
+            
+            conn.close()
+            
+            return {
+                'total': total_records,
+                'synced': synced_records,
+                'unsynced': unsynced_records
+            }
+        except Exception as e:
+            print(f"Error getting local stats: {e}")
+            return {'total': 0, 'synced': 0, 'unsynced': 0}
+    
+    def export_to_csv(self, filename, start_date=None, end_date=None):
+        """Export ข้อมูลเป็น CSV"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            if start_date and end_date:
+                cursor.execute('''
+                    SELECT weight, timestamp, status, branch, scale_pattern
+                    FROM weight_records
+                    WHERE timestamp BETWEEN ? AND ?
+                    ORDER BY timestamp
+                ''', (start_date, end_date))
+            else:
+                cursor.execute('''
+                    SELECT weight, timestamp, status, branch, scale_pattern
+                    FROM weight_records
+                    ORDER BY timestamp
+                ''')
+            
+            data = cursor.fetchall()
+            conn.close()
+            
+            with open(filename, 'w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+                writer.writerow(['Weight', 'Timestamp', 'Status', 'Branch', 'Scale Pattern'])
+                writer.writerows(data)
+            
+            return len(data)
+        except Exception as e:
+            print(f"Error exporting to CSV: {e}")
+            return 0
+
+    # --- START: ฟังก์ชันใหม่สำหรับจัดการ Ticket ใน Local DB ---
+    def generate_local_ticket_id(self):
+        """สร้าง ID ชั่วคราวสำหรับบัตรชั่งที่สร้างตอน Offline"""
+        return f"LOCAL-{uuid.uuid4()}"
+
+    def dict_factory(self, cursor, row):
+        """แปลงผลลัพธ์จาก DB เป็น Dictionary"""
+        d = {}
+        for idx, col in enumerate(cursor.description):
+            d[col[0]] = row[idx]
+        return d
+
+    def get_local_tickets(self, completed=False):
+        """ดึงข้อมูลบัตรชั่งจาก Local DB"""
+        tickets_list = []
+        try:
+            # self.conn.row_factory = self.dict_factory # ใช้ row_factory ที่ตั้งไว้ตอน connect แล้ว
+            cursor = self.conn.cursor()
+            
+            if completed:
+                cursor.execute("SELECT * FROM tickets WHERE WE_WEIGHTOUT IS NOT NULL AND WE_WEIGHTOUT > 0 ORDER BY WE_TIMEOUT DESC")
+            else:
+                cursor.execute("SELECT * FROM tickets WHERE WE_WEIGHTOUT IS NULL OR WE_WEIGHTOUT = 0 ORDER BY WE_TIMEIN DESC")
+            
+            tickets = cursor.fetchall()
+            
+            for ticket_row in tickets:
+                ticket_dict = dict(ticket_row)
+                
+                # ดึงรายการ items ของแต่ละ ticket
+                item_cursor = self.conn.cursor()
+                item_cursor.execute("SELECT * FROM ticket_items WHERE ticket_id = ?", (ticket_dict['WE_ID'],))
+                items = item_cursor.fetchall()
+                ticket_dict['items'] = [dict(item) for item in items]
+                tickets_list.append(ticket_dict)
+                
+        except Exception as e:
+            print(f"Error getting local tickets: {e}")
+        return tickets_list
+
+    def create_local_ticket(self, ticket_data):
+        """สร้างบัตรชั่งใหม่ใน Local DB"""
+        local_id = self.generate_local_ticket_id()
+        try:
+            cursor = self.conn.cursor()
+            
+            query = """
+                INSERT INTO tickets (
+                    WE_ID, WE_LICENSE, WE_WEIGHTIN, WE_TIMEIN, WE_DATE,
+                    WE_VENDOR_CD, WE_VENDOR, WE_DIREF, WE_MAT_CD, WE_MAT, WE_QTY, WE_UOM,
+                    WE_DRIVER, WE_TRUCK_CHAR, WE_WEIGHTMINUS, WE_WEIGHTIN_ORI, sync_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            
+            current_time = datetime.now()
+            
+            params = (
+                local_id,
+                ticket_data.get('WE_LICENSE'),
+                ticket_data.get('WE_WEIGHTIN'),
+                current_time.strftime("%Y-%m-%d %H:%M:%S"),
+                current_time.strftime("%Y-%m-%d"),
+                ticket_data.get('WE_VENDOR_CD'),
+                ticket_data.get('WE_VENDOR'),
+                ticket_data.get('WE_DIREF'),
+                ticket_data.get('WE_MAT_CD'),
+                ticket_data.get('WE_MAT'),
+                ticket_data.get('WE_QTY'),
+                ticket_data.get('WE_UOM'),
+                ticket_data.get('WE_DRIVER'),
+                ticket_data.get('WE_TRUCK_CHAR'),
+                ticket_data.get('WE_WEIGHTMINUS'),
+                ticket_data.get('WE_WEIGHTIN_ORI'),
+                'new'
+            )
+            
+            cursor.execute(query, params)
+            
+            # จัดการ items ถ้ามี
+            items = ticket_data.get('items', [])
+            if items:
+                for item in items:
+                    item_query = """
+                        INSERT INTO ticket_items (ticket_id, VBELN, POSNR, WE_MAT_CD, WE_MAT, WE_QTY, WE_UOM)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """
+                    item_params = (
+                        local_id,
+                        item.get('VBELN'),
+                        item.get('POSNR'),
+                        item.get('WE_MAT_CD'),
+                        item.get('WE_MAT'),
+                        item.get('WE_QTY'),
+                        item.get('WE_UOM')
+                    )
+                    cursor.execute(item_query, item_params)
+            
+            self.conn.commit()
+            return self.get_local_ticket_by_id(local_id)
+        except Exception as e:
+            print(f"Error creating local ticket: {e}")
+            return None
+
+    def update_local_ticket_weigh_out(self, ticket_id, weigh_out_data):
+        """อัปเดตการชั่งออกใน Local DB"""
+        try:
+            cursor = self.conn.cursor()
+
+            # 1. ดึงข้อมูลน้ำหนักเข้ามาก่อน
+            cursor.execute("SELECT WE_WEIGHTIN, WE_WEIGHTMINUS FROM tickets WHERE WE_ID = ?", (ticket_id,))
+            ticket = cursor.fetchone()
+            if not ticket:
+                return None
+
+            weight_in = ticket['WE_WEIGHTIN']
+            weight_out = weigh_out_data.get('WE_WEIGHTOUT')
+            
+            # 2. คำนวณค่าน้ำหนักต่างๆ
+            weight_before_deduction = abs(weight_in - weight_out)
+            weight_deduction = ticket['WE_WEIGHTMINUS'] or 0
+            net_weight = weight_before_deduction - weight_deduction
+
+            # 3. อัปเดตข้อมูล
+            query = """
+                UPDATE tickets SET
+                    WE_WEIGHTOUT = ?,
+                    WE_TIMEOUT = ?,
+                    WE_WEIGHTOUT_ORI = ?,
+                    WE_WEIGHTTOT = ?,
+                    WE_WEIGHTNET = ?,
+                    sync_status = 'updated'
+                WHERE WE_ID = ? AND (sync_status = 'synced' OR sync_status = 'updated')
+            """ # อัปเดตเฉพาะอันที่เคย sync แล้ว
+            
+            params = (
+                weight_out,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                weight_out, # WE_WEIGHTOUT_ORI
+                weight_before_deduction, # WE_WEIGHTTOT
+                net_weight, # WE_WEIGHTNET
+                ticket_id
+            )
+            
+            cursor.execute(query, params)
+            self.conn.commit()
+            
+            return self.get_local_ticket_by_id(ticket_id)
+        except Exception as e:
+            print(f"Error updating local ticket weigh out: {e}")
+            return None
+
+    def get_local_ticket_by_id(self, ticket_id):
+        """ดึงข้อมูลบัตรชั่งใบเดียวจาก Local DB"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM tickets WHERE WE_ID = ?", (ticket_id,))
+            ticket_row = cursor.fetchone()
+            if not ticket_row:
+                return None
+            
+            ticket_dict = dict(ticket_row)
+            
+            # ดึง items
+            item_cursor = self.conn.cursor()
+            item_cursor.execute("SELECT * FROM ticket_items WHERE ticket_id = ?", (ticket_id,))
+            items = item_cursor.fetchall()
+            ticket_dict['items'] = [dict(item) for item in items]
+            
+            return ticket_dict
+        except Exception as e:
+            print(f"Error getting local ticket by id: {e}")
+            return None
+
+    def mark_ticket_as_synced(self, local_id, server_id):
+        """อัปเดตสถานะบัตรชั่งใน Local DB ว่า Sync แล้ว"""
+        try:
+            cursor = self.conn.cursor()
+            query = """
+                UPDATE tickets 
+                SET sync_status = 'synced', server_id = ?
+                WHERE WE_ID = ?
+            """
+            params = (server_id, local_id)
+            cursor.execute(query, params)
+            self.conn.commit()
+            return {"status": "success", "local_id": local_id, "server_id": server_id}
+        except Exception as e:
+            print(f"Error marking ticket as synced: {e}")
+            return None
+    # --- END: ฟังก์ชันใหม่สำหรับจัดการ Ticket ใน Local DB ---
+
+    def send_offline_data_to_server(self, record):
+        """ส่งข้อมูลจาก Local ไป Server"""
+        try:
+            if self.websocket and not self.websocket.closed:
+                message = {
+                    "client_id": self.client_id_var.get(),
+                    "weight": str(record[1]),  # weight
+                    "timestamp": time.time(),
+                    "branch": record[4] if record[4] else self.branch_var.get(),
+                    "branch_prefix": self.get_branch_prefix(record[4] if record[4] else self.branch_var.get()),
+                    "scale_pattern": record[5] if record[5] else self.scale_pattern_var.get(),
+                    "offline_sync": True  # แสดงว่าเป็นข้อมูลจาก offline sync
+                }
+                
+                # ส่งข้อมูลแบบ async
+                asyncio.run_coroutine_threadsafe(
+                    self.websocket.send(json.dumps(message)), 
+                    self.loop
+                )
+                
+                # ทำเครื่องหมายว่า sync แล้ว
+                self.local_data_manager.mark_as_synced(record[0])
+                
+                # อัปเดต Local UI
+                self.offline_ui.update_local_data_display()
+                
+                self.log_message(f"Synced offline data: {record[1]} kg")
+                
+        except Exception as e:
+            self.log_message(f"Error syncing offline data: {e}")
+
+    def show_local_data_window(self):
+        """แสดงหน้าต่างข้อมูล Local"""
+        try:
+            # สร้างหน้าต่างใหม่
+            local_window = tk.Toplevel(self.root)
+            local_window.title("Local Weight Data")
+            local_window.geometry("800x600")
+            
+            # สร้าง Treeview สำหรับแสดงข้อมูล
+            columns = ('ID', 'Weight', 'Timestamp', 'Status', 'Branch', 'Scale Pattern', 'Synced')
+            tree = ttk.Treeview(local_window, columns=columns, show='headings')
+            
+            # กำหนดหัวข้อคอลัมน์
+            for col in columns:
+                tree.heading(col, text=col)
+                tree.column(col, width=100)
+            
+            # ดึงข้อมูลจาก Local Database
+            conn = sqlite3.connect(self.local_data_manager.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, weight, timestamp, status, branch, scale_pattern, synced
+                FROM weight_records
+                ORDER BY timestamp DESC
+                LIMIT 100
+            ''')
+            
+            data = cursor.fetchall()
+            conn.close()
+            
+            # เพิ่มข้อมูลใน Treeview
+            for row in data:
+                synced_text = "Yes" if row[6] else "No"
+                tree.insert('', 'end', values=(row[0], row[1], row[2], row[3], row[4], row[5], synced_text))
+            
+            # เพิ่ม Scrollbar
+            scrollbar = ttk.Scrollbar(local_window, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=scrollbar.set)
+            
+            # จัดวาง
+            tree.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            
+            # แสดงจำนวนข้อมูล
+            info_label = ttk.Label(local_window, text=f"Showing {len(data)} records")
+            info_label.pack(pady=5)
+            
+        except Exception as e:
+            self.log_message(f"Error showing local data window: {e}")
+            messagebox.showerror("Error", f"Error showing local data: {e}")
+
+    def read_weight_from_rs232(self):
+        """อ่านน้ำหนักจาก RS232"""
+        ser = self.get_serial_connection()
+        if not ser:
+            return self.last_weight
+            
+        try:
+            # ตรวจสอบและจำกัดขนาด buffer เพื่อป้องกัน overflow
+            if len(self.read_buffer) > 2000:  # เพิ่มขนาด buffer limit
+                self.read_buffer = self.read_buffer[-1000:]  # เก็บข้อมูลล่าสุด 1000 bytes
+                self.log_message("Buffer size limit reached, trimming...")
+                
+                # หลังจาก trim แล้ว ให้ประมวลผลข้อมูลใหม่
+                try:
+                    decoded_message = self.read_buffer.decode('latin-1', errors='ignore')
+                    lines = []
+                    for line in decoded_message.split('\r\n'):
+                        lines.extend(line.split('\n'))
+                    
+                    # ประมวลผลบรรทัดสุดท้ายเพื่อหาน้ำหนักล่าสุด
+                    for line in reversed(lines):
+                        line = line.strip()
+                        if line:
+                            try:
+                                parsed_value = self.parse_scale_data(line)
+                                if parsed_value != "N/A":
+                                                                                # ตรวจสอบว่าน้ำหนักเป็น 0 หรือไม่
+                                            if parsed_value != "0" and parsed_value != "0.0":
+                                                self.last_weight = parsed_value
+                                                self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                                # ลดการ log เพื่อเพิ่มความเร็ว
+                                                # self.log_message(f"Updated weight after buffer trim: {parsed_value}")
+                                                break
+                            except Exception as e:
+                                continue
+                except Exception as e:
+                    self.log_message(f"Error processing trimmed buffer: {e}")
+            
+            # อ่านข้อมูลที่มีอยู่ใน buffer
+            # ... existing code ...
+
+            # อ่านข้อมูลที่มีอยู่ใน buffer
+            if ser.in_waiting > 0:
+                try:
+                    new_bytes = ser.read(ser.in_waiting)
+                    if new_bytes:
+                        self.read_buffer += new_bytes
+                        
+                        # ส่งข้อมูลไปยัง real-time display
+                        if self.realtime_monitoring_active:
+                            self.add_realtime_data(new_bytes)
+                        
+                        # ประมวลผลข้อมูลใหม่ทันที
+                        try:
+                            decoded_new = new_bytes.decode('latin-1', errors='ignore')
+                            lines = []
+                            for line in decoded_new.split('\r\n'):
+                                lines.extend(line.split('\n'))
+                            
+                            # ตรวจสอบข้อมูลใหม่
+                            for line in lines:
+                                line = line.strip()
+                                if line:
+                                    try:
+                                        parsed_value = self.parse_scale_data(line)
+                                        if parsed_value != "N/A":
+                                            # ตรวจสอบว่าน้ำหนักเป็น 0 หรือไม่
+                                            if parsed_value != "0" and parsed_value != "0.0":
+                                                self.last_weight = parsed_value
+                                                self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                                # ลดการ log เพื่อเพิ่มความเร็ว
+                                                # self.log_message(f"New weight from buffer: {parsed_value}")
+                                    except Exception as e:
+                                        continue
+                        except Exception as e:
+                            pass  # ไม่ log error สำหรับการประมวลผลข้อมูลใหม่
+                        
+                        # Log raw data for debugging (ลดความถี่)
+                        if len(new_bytes) > 20:  # เพิ่มเงื่อนไขเพื่อลด log
+                            self.log_message(f"Buffer data: {len(new_bytes)} bytes")
+                except Exception as e:
+                    self.log_message(f"Error reading buffer: {e}")
+
+# ... existing code ...
+            
+            # ลองอ่านข้อมูลใหม่ (non-blocking read)
+            try:
+                # ใช้ timeout สั้นๆ เพื่อไม่ให้ block นาน
+                original_timeout = ser.timeout
+                ser.timeout = 0.01  # ลด timeout เป็น 10ms
+                new_bytes = ser.read(100)  # เพิ่มจำนวน bytes ที่อ่าน
+                if new_bytes:
+                    self.read_buffer += new_bytes
+                    
+                    # ส่งข้อมูลไปยัง real-time display
+                    if self.realtime_monitoring_active:
+                        self.add_realtime_data(new_bytes)
+                    
+                    # ประมวลผลข้อมูลใหม่ทันที
+                    try:
+                        decoded_new = new_bytes.decode('latin-1', errors='ignore')
+                        lines = []
+                        for line in decoded_new.split('\r\n'):
+                            lines.extend(line.split('\n'))
+                        
+                        # ตรวจสอบข้อมูลใหม่
+                        for line in lines:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    parsed_value = self.parse_scale_data(line)
+                                    if parsed_value != "N/A":
+                                        # ตรวจสอบว่าน้ำหนักเป็น 0 หรือไม่
+                                        if parsed_value != "0" and parsed_value != "0.0":
+                                            self.last_weight = parsed_value
+                                            self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                            # ลดการ log เพื่อเพิ่มความเร็ว
+                                            # self.log_message(f"New weight from timeout read: {parsed_value}")
+                                except Exception as e:
+                                    continue
+                    except Exception as e:
+                        pass  # ไม่ log error สำหรับการประมวลผลข้อมูลใหม่
+                    
+                    # Log raw data for debugging (ลดความถี่)
+                    if len(new_bytes) > 5:
+                        self.log_message(f"New data: {len(new_bytes)} bytes")
+                ser.timeout = original_timeout
+            except Exception as e:
+                # ไม่มีข้อมูลใหม่ ไม่เป็นไร
+                pass
+            
+            # Process buffer for complete messages
+            if self.read_buffer:
+                try:
+                    decoded_message = self.read_buffer.decode('latin-1', errors='ignore')
+                    
+                    # แยกข้อมูลตามบรรทัด
+                    lines = []
+                    for line in decoded_message.split('\r\n'):
+                        lines.extend(line.split('\n'))
+                    
+                    processed_lines = 0
+                    last_processed_index = 0
+                    
+                    for i, line in enumerate(lines):
+                        line = line.strip()
+                        if line:  # ถ้ามีข้อมูลในบรรทัด
+                            try:
+                                parsed_value = self.parse_scale_data(line)
+                                if parsed_value != "N/A":
+                                    # ตรวจสอบว่าค่าใหม่แตกต่างจากค่าเดิมหรือไม่
+                                    if parsed_value != self.last_weight:
+                                        self.last_weight = parsed_value
+                                        self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                        # ลดการ log เพื่อเพิ่มความเร็ว
+                                        # self.log_message(f"New weight: {parsed_value} (from: {line})")
+                                    processed_lines += 1
+                                    last_processed_index = i
+                            except Exception as e:
+                                self.log_message(f"Error parsing line '{line}': {e}")
+                    
+                    # ล้าง buffer เฉพาะบรรทัดที่ประมวลผลแล้ว
+                    if processed_lines > 0:
+                        try:
+                            # หาตำแหน่งของบรรทัดสุดท้ายที่ประมวลผล
+                            processed_content = '\r\n'.join(lines[:last_processed_index + 1])
+                            if processed_content:
+                                # ลบข้อมูลที่ประมวลผลแล้วออกจาก buffer
+                                remaining_content = decoded_message[len(processed_content):].lstrip('\r\n')
+                                self.read_buffer = remaining_content.encode('latin-1', errors='ignore')
+                                
+                                # ตรวจสอบว่ามีข้อมูลใหม่เข้ามาหรือไม่
+                                if len(self.read_buffer) > 0:
+                                    self.log_message(f"Buffer cleared, remaining: {len(self.read_buffer)} bytes")
+                        except Exception as e:
+                            self.log_message(f"Error clearing buffer: {e}")
+                            # ถ้าเกิดข้อผิดพลาด ให้ล้าง buffer ทั้งหมด
+                            self.read_buffer = b''
+                    
+                    # ถ้า buffer ใหญ่เกินไป ให้ล้างบางส่วน
+                    if len(self.read_buffer) > 1500:
+                        # เก็บข้อมูลล่าสุด 500 bytes
+                        self.read_buffer = self.read_buffer[-500:]
+                        self.log_message("Buffer trimmed due to size")
+                        
+                        # หลังจาก trim buffer แล้ว ให้ประมวลผลข้อมูลใหม่
+                        try:
+                            decoded_message = self.read_buffer.decode('latin-1', errors='ignore')
+                            lines = []
+                            for line in decoded_message.split('\r\n'):
+                                lines.extend(line.split('\n'))
+                            
+                            # ประมวลผลบรรทัดสุดท้ายเพื่อหาน้ำหนักล่าสุด
+                            for line in reversed(lines):
+                                line = line.strip()
+                                if line:
+                                    try:
+                                        parsed_value = self.parse_scale_data(line)
+                                        if parsed_value != "N/A":
+                                            # ตรวจสอบว่าน้ำหนักเป็น 0 หรือไม่
+                                            if parsed_value != "0" and parsed_value != "0.0":
+                                                self.last_weight = parsed_value
+                                                self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                                # ลดการ log เพื่อเพิ่มความเร็ว
+                                                # self.log_message(f"Updated weight after buffer trim: {parsed_value}")
+                                                break
+                                    except Exception as e:
+                                        continue
+                        except Exception as e:
+                            self.log_message(f"Error processing trimmed buffer: {e}")
+                        
+                except Exception as e:
+                    self.log_message(f"Buffer decode error: {e}")
+                    # ถ้า decode ไม่ได้ ให้ล้าง buffer
+                    self.read_buffer = b''
+            
+            return self.last_weight
+        except Exception as e:
+            self.log_message(f"Serial read error: {e}")
+            # ถ้าเกิดข้อผิดพลาด ให้รีเซ็ตการเชื่อมต่อ
+            try:
+                if ser and ser.is_open:
+                    ser.reset_input_buffer()
+                    ser.reset_output_buffer()
+                    self.read_buffer = b''
+                    self.log_message("Serial buffers reset due to error")
+            except Exception as reset_error:
+                self.log_message(f"Error resetting serial buffers: {reset_error}")
+            return "Error"
+
+# ... existing code ...
+    def start_client(self):
+        """เริ่มต้น client"""
+        if self.is_running:
+            return
+            
+        # ตรวจสอบการเชื่อมต่อ Serial ก่อนเริ่ม
+        if not self.test_connection_status():
+            messagebox.showwarning("Warning", "Serial port is not available!\nPlease check your connection and settings.")
+            return
+            
+        self.is_running = True
+        self.start_btn.config(state='disabled')
+        self.stop_btn.config(state='normal')
+        
+        # เริ่ม Local Web Server
+        self.local_web_server.start_server()
+        
+        # เริ่ม Local API Server
+        self.local_api_server.start_server()
+        
+        # เริ่ม thread สำหรับการทำงาน
+        self.client_thread = threading.Thread(target=self.run_client_async, daemon=True)
+        self.client_thread.start()
+        
+        self.log_message("Client started")
+
+        
+    def test_raw_reading(self):
+        """ทดสอบการอ่านข้อมูล Raw"""
+        try:
+            self.log_message("=== Testing Raw Reading ===")
+            
+            ser = self.get_serial_connection()
+            if not ser:
+                self.log_message("❌ Serial connection not available!")
+                return
+            
+            # ล้าง buffer
+            ser.reset_input_buffer()
+            ser.reset_output_buffer()
+            self.read_buffer = b''
+            
+            # อ่านข้อมูล 10 ครั้ง
+            for i in range(10):
+                try:
+                    original_timeout = ser.timeout
+                    ser.timeout = 0.5
+                    
+                    data = ser.read(100)
+                    if data:
+                        # ลบการแสดง Hex และ ASCII
+                        self.log_message(f"Read {i+1}: {data.decode('latin-1', errors='ignore')}")
+                        self.read_buffer += data
+                    else:
+                        self.log_message(f"Read {i+1}: No data")
+                    
+                    ser.timeout = original_timeout
+                    time.sleep(0.2)
+                    
+                except Exception as e:
+                    self.log_message(f"Read {i+1} error: {e}")
+            
+            self.log_message("=== Raw Reading Test Complete ===")
+            
+        except Exception as e:
+            self.log_message(f"Raw reading test error: {e}")
+                
+    # ... existing code ...
+
+    def stop_client(self):
+        """หยุด client"""
+        try:
+            self.log_message("Stopping client...")
+            
+            self.is_running = False
+            self.is_connected = False
+            
+            # หยุด Local Web Server
+            self.local_web_server.stop_server()
+            
+            # หยุด Local API Server
+            self.local_api_server.stop_server()
+            
+            # หยุด real-time monitoring
+            if self.realtime_monitoring_active:
+                self.toggle_realtime_monitoring()
+            
+            # ปิดการเชื่อมต่อ Serial
+            if self.serial_connection and self.serial_connection.is_open:
+                try:
+                    self.serial_connection.close()
+                    self.log_message("Serial connection closed")
+                except Exception as e:
+                    self.log_message(f"Error closing serial connection: {e}")
+                
+            # ปิด WebSocket
+            if self.websocket and self.loop:
+                try:
+                    # ส่ง task ไปยัง event loop เพื่อปิด WebSocket
+                    future = asyncio.run_coroutine_threadsafe(self.close_websocket(), self.loop)
+                    # รอให้ปิดเสร็จ (timeout 5 วินาที)
+                    future.result(timeout=5)
+                    self.log_message("WebSocket connection closed")
+                except Exception as e:
+                    self.log_message(f"WebSocket close error: {e}")
+            
+            # อัปเดต UI
+            self.start_btn.config(state='normal')
+            self.stop_btn.config(state='disabled')
+            self.serial_status_label.config(text="🔴 Serial: Disconnected")
+            self.server_status_label.config(text="🔴 Server: Disconnected")
+            
+            # ล้าง buffer
+            self.read_buffer = b''
+            
+            self.log_message("Client stopped successfully")
+        except Exception as e:
+            self.log_message(f"Stop client error: {e}")
+            # แม้เกิดข้อผิดพลาด ก็ต้องอัปเดตสถานะ
+            self.is_running = False
+            self.is_connected = False
+            self.start_btn.config(state='normal')
+            self.stop_btn.config(state='disabled')
+
+# ... existing code ...
+    
+    def load_additional_config(self):
+        """โหลด config เพิ่มเติมหลังจากสร้าง GUI แล้ว"""
+        try:
+            if hasattr(self, 'config_data'):
+                # โหลด branch configuration
+                if 'branch' in self.config_data:
+                    try:
+                        self.branch_var.set(self.config_data['branch'])
+                        self.log_message(f"Loaded branch: {self.config_data['branch']}")
+                    except Exception as e:
+                        self.log_message(f"Error loading branch config: {e}")
+                
+                # โหลด scale pattern configuration
+                if 'scale_pattern' in self.config_data:
+                    try:
+                        self.scale_pattern_var.set(self.config_data['scale_pattern'])
+                        self.log_message(f"Loaded scale pattern: {self.config_data['scale_pattern']}")
+                    except Exception as e:
+                        self.log_message(f"Error loading scale pattern config: {e}")
+                
+                # โหลด custom pattern 3 configuration
+                if 'custom_prefix' in self.config_data:
+                    try:
+                        self.custom_pattern_prefix_var.set(self.config_data['custom_prefix'])
+                    except Exception as e:
+                        self.log_message(f"Error loading custom prefix config: {e}")
+                        
+                if 'custom_regex' in self.config_data:
+                    try:
+                        self.custom_pattern_regex_var.set(self.config_data['custom_regex'])
+                    except Exception as e:
+                        self.log_message(f"Error loading custom regex config: {e}")
+                        
+                if 'custom_iszero' in self.config_data:
+                    try:
+                        self.custom_pattern_is_zero_var.set(self.config_data['custom_iszero'])
+                    except Exception as e:
+                        self.log_message(f"Error loading custom iszero config: {e}")
+                
+                self.log_message("Additional config loaded successfully")
+                
+                # อัปเดตการแสดงผล
+                try:
+                    self.update_branch_prefix_display()
+                    self.update_scale_pattern_info()
+                except Exception as e:
+                    self.log_message(f"Error updating displays: {e}")
+                
+        except Exception as e:
+            self.log_message(f"Error loading additional config: {e}")
+    
+    async def close_websocket(self):
+        """ปิด WebSocket connection อย่างปลอดภัย"""
+        try:
+            if self.websocket and not self.websocket.closed:
+                await self.websocket.close()
+                self.websocket = None
+        except Exception as e:
+            self.log_message(f"Error in close_websocket: {e}")
+            self.websocket = None
+        
+    def run_client_async(self):
+        """รัน client ใน async loop"""
+        try:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+            self.loop.run_until_complete(self.client_main())
+        except Exception as e:
+            self.log_message(f"Client async error: {e}")
+        
+    async def client_main(self):
+        """ฟังก์ชันหลักของ client"""
+        reconnect_delay = 5  # เริ่มต้นรอ 5 วินาที
+        max_reconnect_delay = 60  # สูงสุดรอ 60 วินาที
+        
+        while self.is_running:
+            try:
+                server_url = self.server_url_var.get()
+                client_id = self.client_id_var.get()
+                
+                # ... existing code ...
+
+                self.log_message(f"Connecting to server {server_url}")
+                
+                # สร้าง WebSocket connection
+                websocket = await websockets.connect(server_url)
+                self.websocket = websocket
+                self.is_connected = True
+                self.server_status_label.config(text="🟢 Server: Connected")
+                self.log_message("Connected to server")
+                
+                # รีเซ็ต reconnect delay เมื่อเชื่อมต่อสำเร็จ
+                reconnect_delay = 5
+                
+                # ล้าง buffer เก่าเมื่อ reconnect เพื่อไม่ให้ส่งข้อมูลเก่า
+                if len(self.read_buffer) > 0:
+                    self.log_message("Clearing old buffer after reconnect")
+                    self.read_buffer = b''
+                
+                try:
+                    # เริ่มการส่งข้อมูล
+                    await self.send_weight_loop(client_id)
+                except websockets.exceptions.ConnectionClosed:
+                    self.log_message("WebSocket connection closed by server")
+                except websockets.exceptions.ConnectionClosedOK:
+                    self.log_message("WebSocket connection closed normally")
+                except Exception as e:
+                    self.log_message(f"Error in send_weight_loop: {e}")
+                finally:
+                    # ปิด WebSocket connection อย่างถูกต้อง
+                    try:
+                        await websocket.close()
+                        self.log_message("WebSocket connection closed properly")
+                    except Exception as e:
+                        self.log_message(f"Error closing websocket: {e}")
+                    
+                    self.websocket = None
+                    self.is_connected = False
+                    self.server_status_label.config(text="🔴 Server: Disconnected")
+                    
+            except websockets.exceptions.InvalidURI:
+                self.log_message(f"Invalid server URL: {server_url}")
+                self.is_connected = False
+                self.server_status_label.config(text="🔴 Server: Invalid URL")
+                await asyncio.sleep(10)  # รอนานขึ้นสำหรับ URL ที่ผิด
+                continue
+                    
+            except Exception as e:
+                self.log_message(f"Connection error: {e}")
+                self.is_connected = False
+                self.server_status_label.config(text="🔴 Server: Disconnected")
+            
+            # รอก่อน reconnect
+            if self.is_running:
+                self.log_message(f"Reconnecting in {reconnect_delay} seconds...")
+                await asyncio.sleep(reconnect_delay)
+                
+                # เพิ่ม delay แบบ exponential backoff
+                reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
+
+# ... existing code ...
+                
+    async def send_weight_loop(self, client_id):
+        """ลูปสำหรับส่งข้อมูลน้ำหนัก"""
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+        
+        while self.is_running and self.is_connected:
+            try:
+                # ตรวจสอบว่า WebSocket ยังเชื่อมต่ออยู่หรือไม่
+                if not self.websocket or self.websocket.closed:
+                    self.log_message("WebSocket connection lost, breaking loop")
+                    break
+                
+                weight = self.read_weight_from_rs232()
+                
+                # ตรวจสอบว่าค่าน้ำหนักถูกต้องหรือไม่
+                if weight == "Error" or weight == "N/A":
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        self.log_message(f"Too many consecutive errors ({consecutive_errors}), reconnecting...")
+                        break
+                    await asyncio.sleep(1.0)  # รอเวลานานขึ้นเมื่อเกิด error
+                    continue
+                
+                # ตรวจสอบว่าน้ำหนักเป็น 0 หรือไม่ และไม่ส่งซ้ำ
+                if weight == "0" or weight == "0.0":
+                    # ถ้าน้ำหนักเป็น 0 ให้รอข้อมูลใหม่
+                    await asyncio.sleep(0.1)  # ลด delay จาก 0.5 เป็น 0.1 วินาที
+                    continue
+                
+                # รีเซ็ต error counter เมื่อสำเร็จ
+                consecutive_errors = 0
+                
+                # ส่งข้อมูลเพิ่มเติมรวมถึง branch prefix และ scale pattern
+                message = {
+                    "client_id": client_id,
+                    "weight": weight,
+                    "timestamp": time.time(),
+                    "branch": self.branch_var.get(),
+                    "branch_prefix": self.get_branch_prefix(self.branch_var.get()),
+                    "scale_pattern": self.scale_pattern_var.get()
+                }
+                
+                # ... existing code ...
+
+                try:
+                    # ตรวจสอบ WebSocket state ก่อนส่ง
+                    if self.websocket and not self.websocket.closed:
+                        await self.websocket.send(json.dumps(message))
+                        self.log_message(f"Sent weight: {weight} (Branch: {self.branch_var.get()}, Pattern: {self.scale_pattern_var.get()})")
+                    else:
+                        self.log_message("WebSocket not available for sending")
+                        break
+                        
+                except websockets.exceptions.ConnectionClosed:
+                    self.log_message("WebSocket connection closed during send")
+                    break
+                except websockets.exceptions.ConnectionClosedOK:
+                    self.log_message("WebSocket connection closed normally during send")
+                    break
+                except Exception as send_error:
+                    self.log_message(f"Error sending to websocket: {send_error}")
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        self.log_message(f"Too many send errors ({consecutive_errors}), reconnecting...")
+                        break
+                
+                await asyncio.sleep(0.1)  # ลด delay จาก 0.5 เป็น 0.1 วินาที
+                
+            except websockets.exceptions.ConnectionClosed:
+                self.log_message("WebSocket connection closed in main loop")
+                break
+            except websockets.exceptions.ConnectionClosedOK:
+                self.log_message("WebSocket connection closed normally in main loop")
+                break
+            except Exception as e:
+                consecutive_errors += 1
+                self.log_message(f"Error in send_weight_loop: {e}")
+                
+                if consecutive_errors >= max_consecutive_errors:
+                    self.log_message(f"Too many consecutive errors ({consecutive_errors}), stopping client...")
+                    break
+                
+                await asyncio.sleep(1.0)  # รอเวลานานขึ้นเมื่อเกิด error
+
+# ... existing code ...
+
+        
+    def test_raw_data_display(self):
+        """ทดสอบการแสดงข้อมูล Raw Data"""
+        try:
+            ser = self.get_serial_connection()
+            if not ser:
+                messagebox.showerror("Error", "Serial connection not available!")
+                return
+            
+            self.log_message("=== Testing Raw Data Display ===")
+            
+            # ล้าง buffer ก่อน
+            ser.reset_input_buffer()
+            ser.reset_output_buffer()
+            self.read_buffer = b''
+            
+            # อ่านข้อมูล 5 ครั้ง
+            for i in range(5):
+                try:
+                    # ตั้ง timeout สั้นๆ
+                    original_timeout = ser.timeout
+                    ser.timeout = 0.5
+                    
+                    # อ่านข้อมูล
+                    data = ser.read(100)
+                    if data:
+                        # ลบการแสดง Hex และ ASCII
+                        self.log_message(f"Read {i+1}: {data.decode('latin-1', errors='ignore')}")
+                        
+                        # เพิ่มข้อมูลลงใน buffer
+                        self.read_buffer += data
+                        
+                        # ลอง decode และ parse
+                        try:
+                            decoded = self.read_buffer.decode('latin-1', errors='ignore')
+                            self.log_message(f"Decoded: '{decoded}'")
+                            
+                            # แยกข้อมูลตามบรรทัด
+                            lines = decoded.split('\r\n') + decoded.split('\n')
+                            for line in lines:
+                                line = line.strip()
+                                if line:
+                                    self.log_message(f"Processing line: '{line}'")
+                                    parsed_value = self.parse_scale_data(line)
+                                    self.log_message(f"Parsed result: {parsed_value}")
+                                    
+                                    # อัปเดต weight label
+                                    if parsed_value != "N/A":
+                                        self.last_weight = parsed_value
+                                        self.weight_label.config(text=f"⚖️ Weight: {parsed_value}")
+                                        self.log_message(f"Updated weight: {parsed_value}")
+                        except Exception as e:
+                            self.log_message(f"Parse error: {e}")
+                    else:
+                        self.log_message(f"Read {i+1}: No data")
+                    
+                    ser.timeout = original_timeout
+                    time.sleep(0.2)  # รอ 200ms
+                    
+                except Exception as e:
+                    self.log_message(f"Read {i+1} error: {e}")
+            
+            self.log_message("=== Raw Data Display Test Complete ===")
+            
+        except Exception as e:
+            self.log_message(f"Test raw data display error: {e}")
+            messagebox.showerror("Error", f"Test failed: {e}")
+
+    def run(self):
+        """เริ่มต้น GUI"""
+        try:
+            # ตั้งค่า protocol สำหรับการปิดโปรแกรม
+            self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+            
+            self.log_message("RS232 Scale Client GUI started")
+            self.root.mainloop()
+        except Exception as e:
+            print(f"GUI error: {e}")
+    
+    # ... existing code ...
+
+    def on_closing(self):
+        """เมื่อปิดโปรแกรม"""
+        try:
+            self.log_message("Shutting down application...")
+            
+            # หยุด client
+            if self.is_running:
+                self.stop_client()
+            
+            # หยุด tray icon
+            if self.tray_icon:
+                try:
+                    self.tray_icon.stop()
+                except Exception as e:
+                    print(f"Error stopping tray icon: {e}")
+            
+            # ปิดการเชื่อมต่อ Serial
+            if self.serial_connection:
+                try:
+                    self.serial_connection.close()
+                except Exception as e:
+                    print(f"Error closing serial connection: {e}")
+            
+            # ล้าง buffer
+            self.read_buffer = b''
+            
+            # ปิดโปรแกรม
+            try:
+                self.root.destroy()
+            except Exception as e:
+                print(f"Error destroying root: {e}")
+        except Exception as e:
+            print(f"Closing error: {e}")
+            try:
+                self.root.destroy()
+            except:
+                pass
+
+# ... existing code ...
+
+    def open_frontend(self):
+        """เปิดหน้าเว็บ Frontend"""
+        try:
+            # ตรวจสอบสถานะการเชื่อมต่อ
+            if self.is_offline_mode:
+                # เปิด Local Dashboard
+                local_url = f"http://localhost:{self.local_web_server.port}"
+                self.log_message(f"Opening local dashboard: {local_url}")
+                webbrowser.open(local_url)
+                messagebox.showinfo("Local Dashboard", f"Opening local dashboard:\n{local_url}\n\nThis shows data from local storage.")
+            else:
+                # เปิด Frontend ปกติ
+                self.log_message(f"Opening frontend: {FRONTEND_URL}")
+                webbrowser.open(FRONTEND_URL)
+                messagebox.showinfo("Frontend", f"Opening frontend in browser:\n{FRONTEND_URL}")
+        except Exception as e:
+            self.log_message(f"Error opening frontend: {e}")
+            messagebox.showerror("Error", f"Failed to open frontend: {e}")
+    
+    def minimize_to_tray(self):
+        """ซ่อนโปรแกรมลงใน Tray"""
+        try:
+            if not self.is_minimized_to_tray:
+                # สร้าง icon สำหรับ tray
+                self.create_tray_icon()
+                
+                # ซ่อนหน้าต่างหลัก
+                self.root.withdraw()
+                self.is_minimized_to_tray = True
+                self.tray_btn.config(text="📌 Show Window")
+                
+                self.log_message("Application minimized to system tray")
+                messagebox.showinfo("Tray", "Application minimized to system tray.\nRight-click tray icon to show window.")
+            else:
+                # แสดงหน้าต่างหลัก
+                self.show_from_tray()
+                
+        except Exception as e:
+            self.log_message(f"Error minimizing to tray: {e}")
+            messagebox.showerror("Error", f"Failed to minimize to tray: {e}")
+    
+    def create_tray_icon(self):
+        """สร้าง icon สำหรับ system tray"""
+        try:
+            # สร้าง icon ง่ายๆ จากข้อความ
+            icon_image = Image.new('RGB', (64, 64), color='blue')
+            
+            # สร้าง menu สำหรับ tray
+            menu = (
+                item('Show Window', self.show_from_tray),
+                item('Open Frontend', self.open_frontend),
+                item('Start Client', self.start_client),
+                item('Stop Client', self.stop_client),
+                item('Exit', self.quit_application)
+            )
+            
+            # สร้าง tray icon
+            self.tray_icon = pystray.Icon("RS232 Scale Client", icon_image, "RS232 Scale Client", menu)
+            
+            # เริ่ม tray icon ใน thread แยก
+            tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
+            tray_thread.start()
+            
+        except Exception as e:
+            self.log_message(f"Error creating tray icon: {e}")
+    
+    def show_from_tray(self):
+        """แสดงหน้าต่างหลักจาก tray"""
+        try:
+            if self.is_minimized_to_tray:
+                self.root.deiconify()
+                self.root.lift()
+                self.root.focus_force()
+                self.is_minimized_to_tray = False
+                self.tray_btn.config(text="📌 Hide to Tray")
+                
+                # หยุด tray icon
+                if self.tray_icon:
+                    self.tray_icon.stop()
+                    self.tray_icon = None
+                
+                self.log_message("Application restored from system tray")
+        except Exception as e:
+            self.log_message(f"Error showing from tray: {e}")
+    
+    def quit_application(self):
+        """ปิดโปรแกรม"""
+        try:
+            # หยุด tray icon
+            if self.tray_icon:
+                try:
+                    self.tray_icon.stop()
+                except Exception as e:
+                    print(f"Error stopping tray icon: {e}")
+            
+            # ปิดโปรแกรม
+            self.on_closing()
+        except Exception as e:
+            self.log_message(f"Error quitting application: {e}")
+            try:
+                self.root.destroy()
+            except:
+                pass
+
+    def show_main_help(self):
+        """แสดงหน้าต่าง Help หลัก"""
+        help_window = tk.Toplevel(self.root)
+        help_window.title("❓ Help - RS232 Scale Client")
+        help_window.geometry("700x500")
+        help_window.configure(bg='#f0f0f0')
+        
+        # Make window modal
+        help_window.transient(self.root)
+        help_window.grab_set()
+        
+        # Main frame
+        main_frame = ttk.Frame(help_window, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = ttk.Label(main_frame, text="❓ วิธีใช้งาน RS232 Scale Client", 
+                               font=('Tahoma', 14, 'bold'))
+        title_label.pack(pady=(0, 15))
+        
+        # Help text
+        help_text = scrolledtext.ScrolledText(main_frame, height=25, width=80, font=('Tahoma', 9))
+        help_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        help_content = """❓ คู่มือการใช้งาน RS232 Scale Client
+
+📋 ขั้นตอนการใช้งาน:
+
+1️⃣ การตั้งค่า Serial Port:
+   • Port: เลือกพอร์ตที่เชื่อมต่อกับตาชั่ง (COM1, COM2, etc.)
+   •  Refresh: อัปเดตรายการพอร์ตที่ใช้งานได้
+   • 🔍 Check: ตรวจสอบรายละเอียดพอร์ตทั้งหมด
+   • Baud Rate: ความเร็วในการส่งข้อมูล (1200, 9600, etc.)
+   • Parity: การตรวจสอบความถูกต้อง (N, E, O)
+   • Stop Bits: บิตหยุด (1, 1.5, 2)
+   • Byte Size: ขนาดข้อมูล (5, 6, 7, 8)
+   • Timeout: เวลารอข้อมูล (วินาที)
+   • Sensitivity: ความไวในการอ่านน้ำหนัก (kg)
+
+2️⃣ การตั้งค่า Scale Pattern:
+   • เลือก Pattern ที่ตรงกับรุ่นตาชั่ง
+   • Default: สำหรับตาชั่งทั่วไป
+   • CAS Scale: สำหรับตาชั่ง CAS
+   • Mettler Toledo: สำหรับตาชั่ง Mettler Toledo
+   • Sartorius: สำหรับตาชั่ง Sartorius
+   • Custom Pattern 1-3: สำหรับ Pattern ที่กำหนดเอง
+
+3️⃣ การตั้งค่า Custom Pattern 3:
+   • Pattern Prefix: ชื่อของ Pattern (เช่น "1@H")
+   • Regex Pattern: รูปแบบข้อมูล (เช่น "1@H\\s+(\\d+)")
+   • Is Zero Indicator: ติ๊กถ้าเป็นสัญญาณน้ำหนัก 0
+   • Update Custom Pattern: อัปเดต Pattern ที่กำหนดเอง
+   • ❓ Help: ดูรายละเอียดการใช้งาน Custom Pattern
+
+4️⃣ การตั้งค่าสาขา:
+   • เลือกสาขาที่ใช้งาน
+   • ระบบจะแสดง Prefix ที่ใช้ (Z1, Z2, etc.)
+   • สาขาลพบุรีจะใช้ปี พ.ศ. 2 ตัวสุดท้าย
+
+5️⃣ การตั้งค่า Server:
+   • Server URL: ที่อยู่เซิร์ฟเวอร์ (ws://localhost:8765)
+   • Client ID: รหัสประจำตัว Client
+
+🔧 ปุ่มควบคุม:
+
+• Test: ทดสอบการเชื่อมต่อ Serial Port
+• Save: บันทึกการตั้งค่าทั้งหมด
+• Start: เริ่มต้นการทำงาน Client
+• Stop: หยุดการทำงาน Client
+• 🌐 OPEN FRONTEND: เปิดหน้าเว็บ Frontend
+• 📌 Hide to Tray: ซ่อนโปรแกรมลงใน System Tray
+• ❓ Help: แสดงคู่มือการใช้งาน
+
+🔍 Real-time RS232 Data Monitoring:
+
+• ▶️ Start Monitoring: เริ่มการ monitor ข้อมูล real-time
+• ⏸️ Stop Monitoring: หยุดการ monitor ข้อมูล real-time
+• 🗑️ Clear Data: ล้างข้อมูล real-time
+• Auto-scroll: เลื่อนหน้าจออัตโนมัติ
+• Max lines: จำกัดจำนวนบรรทัดที่แสดง
+
+📊 ข้อมูลที่แสดงใน Real-time:
+• Timestamp: เวลาที่รับข้อมูล (แสดง milliseconds)
+• HEX: ข้อมูลในรูปแบบ Hexadecimal
+• ASCII: ข้อมูลในรูปแบบ ASCII (แสดง . สำหรับตัวอักษรที่ไม่แสดงผล)
+• DEC: ข้อมูลในรูปแบบ Decimal
+• Length: จำนวน bytes ที่รับได้
+
+ การตรวจสอบสถานะ:
+
+• 🔴 Serial: Disconnected - ไม่เชื่อมต่อ Serial
+• 🟢 Serial: Connected - เชื่อมต่อ Serial แล้ว
+• 🔴 Server: Disconnected - ไม่เชื่อมต่อ Server
+• 🟢 Server: Connected - เชื่อมต่อ Server แล้ว
+• ⚖️ Weight: แสดงน้ำหนักปัจจุบัน
+
+📝 Activity Log:
+• แสดงข้อมูลการทำงานทั้งหมด
+• Raw data: ข้อมูลดิบจาก Serial
+• Decoded message: ข้อมูลที่ถอดรหัสแล้ว
+• Sent weight: น้ำหนักที่ส่งไป Server
+
+⚠️ ข้อควรระวัง:
+• ต้องรันเป็น Administrator หากมีปัญหา Permission
+• ปิดโปรแกรมอื่นที่ใช้ Serial Port เดียวกัน
+• ตรวจสอบการเชื่อมต่อ USB to Serial adapter
+• ทดสอบการเชื่อมต่อก่อนใช้งานจริง
+
+💡 เคล็ดลับ:
+• ใช้ปุ่ม  Check เพื่อดูรายละเอียดพอร์ต
+• ใช้ Real-time monitoring เพื่อดูข้อมูลดิบจากตาชั่ง
+• ใช้ข้อมูล real-time เพื่อปรับแต่ง Scale Pattern
+• บันทึกการตั้งค่าหลังจากทดสอบแล้ว
+• ใช้ Custom Pattern 3 สำหรับตาชั่งที่ไม่รองรับ
+• ใช้ Sensitivity เพื่อปรับความไวในการอ่านน้ำหนัก
+
+🔗 การเชื่อมต่อ:
+• Serial Port → ตาชั่ง
+• WebSocket → Server
+• ข้อมูลน้ำหนักจะถูกส่งไปยัง Server ทุก 0.5 วินาที
+• Real-time monitoring อัปเดตทุก 100ms
+
+🌐 System Tray:
+• คลิกขวาที่ tray icon เพื่อดูเมนู
+• เลือก "Show Window" เพื่อแสดงหน้าต่างหลัก
+• เลือก "Open Frontend" เพื่อเปิดหน้าเว็บ
+• เลือก "Exit" เพื่อปิดโปรแกรม"""
+        
+        help_text.insert(tk.END, help_content)
+        help_text.config(state=tk.DISABLED)
+        
+        # Close button
+        close_btn = ttk.Button(main_frame, text="ปิด", command=help_window.destroy, width=10)
+        close_btn.pack(pady=(0, 5))
+        
+        # Center window
+        help_window.update_idletasks()
+        x = (help_window.winfo_screenwidth() // 2) - (help_window.winfo_width() // 2)
+        y = (help_window.winfo_screenheight() // 2) - (help_window.winfo_height() // 2)
+        help_window.geometry(f"+{x}+{y}")
+
+# เพิ่ม Connection Monitor Class
+class ConnectionMonitor:
+    def __init__(self, client):
+        self.client = client
+        self.is_online = False
+        self.monitor_thread = threading.Thread(target=self.monitor_connection)
+        self.monitor_thread.daemon = True
+        self.monitor_thread.start()
+    
+    def monitor_connection(self):
+        """ตรวจสอบการเชื่อมต่ออย่างต่อเนื่อง"""
+        while True:
+            try:
+                # ตรวจสอบ WebSocket connection
+                if (self.client.websocket and 
+                    not self.client.websocket.closed):
+                    self.is_online = True
+                    if hasattr(self.client, 'offline_ui'):
+                        self.client.offline_ui.update_connection_status(True)
+                else:
+                    self.is_online = False
+                    if hasattr(self.client, 'offline_ui'):
+                        self.client.offline_ui.update_connection_status(False)
+                
+                time.sleep(5)  # ตรวจสอบทุก 5 วินาที
+                
+            except Exception as e:
+                self.is_online = False
+                if hasattr(self.client, 'offline_ui'):
+                    self.client.offline_ui.update_connection_status(False)
+                time.sleep(5)
+
+# เพิ่ม Offline Mode UI Class
+class OfflineModeUI:
+    def __init__(self, parent):
+        self.parent = parent
+        self.setup_offline_ui()
+    
+    def setup_offline_ui(self):
+        """สร้าง UI สำหรับ Offline Mode"""
+        # ใช้ grid แทน pack เพื่อให้เข้ากับ layout หลัก
+        self.offline_frame = ttk.LabelFrame(self.parent, text="🔄 Offline Mode & Local Storage")
+        self.offline_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), padx=10, pady=5)
+        self.offline_frame.columnconfigure(1, weight=1)
+        
+        # สถานะการเชื่อมต่อ
+        self.connection_status = ttk.Label(
+            self.offline_frame, 
+            text="🔴 Offline - Local Mode Active",
+            foreground="red",
+            font=("Arial", 10, "bold")
+        )
+        self.connection_status.grid(row=0, column=0, columnspan=2, pady=5)
+        
+        # แสดงข้อมูล Local
+        self.local_data_label = ttk.Label(
+            self.offline_frame,
+            text="Local Records: 0 | Synced: 0 | Unsynced: 0"
+        )
+        self.local_data_label.grid(row=1, column=0, columnspan=2, pady=5)
+        
+        # Frame สำหรับปุ่มต่างๆ
+        button_frame = ttk.Frame(self.offline_frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=5)
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
+        button_frame.columnconfigure(2, weight=1)
+        
+        # ปุ่ม Sync ข้อมูล
+        self.sync_button = ttk.Button(
+            button_frame,
+            text="🔄 Sync Data to Server",
+            command=self.sync_data,
+            style="Accent.TButton"
+        )
+        self.sync_button.grid(row=0, column=0, padx=5)
+        
+        # ปุ่ม Export CSV
+        self.export_button = ttk.Button(
+            button_frame,
+            text="📊 Export to CSV",
+            command=self.export_data
+        )
+        self.export_button.grid(row=0, column=1, padx=5)
+        
+        # ปุ่ม View Local Data
+        self.view_button = ttk.Button(
+            button_frame,
+            text="👁️ View Local Data",
+            command=self.view_local_data
+        )
+        self.view_button.grid(row=0, column=2, padx=5)
+    
+    def update_connection_status(self, is_online):
+        """อัปเดตสถานะการเชื่อมต่อ"""
+        if is_online:
+            self.connection_status.config(
+                text=" Online - Connected to Server",
+                foreground="green"
+            )
+        else:
+            self.connection_status.config(
+                text="🔴 Offline - Local Mode Active",
+                foreground="red"
+            )
+    
+    def update_local_data_display(self):
+        """อัปเดตการแสดงข้อมูล Local"""
+        if hasattr(self.parent, 'local_data_manager'):
+            stats = self.parent.local_data_manager.get_local_stats()
+            self.local_data_label.config(
+                text=f"Local Records: {stats['total']} | Synced: {stats['synced']} | Unsynced: {stats['unsynced']}"
+            )
+    
+    def sync_data(self):
+        """Sync ข้อมูลจาก Local ไป Server"""
+        if hasattr(self.parent, 'local_data_manager'):
+            unsynced_data = self.parent.local_data_manager.get_unsynced_data()
+            if unsynced_data:
+                self.parent.log_message(f"Syncing {len(unsynced_data)} records...")
+                # ส่งข้อมูลไป Server
+                for record in unsynced_data:
+                    self.parent.send_offline_data_to_server(record)
+            else:
+                self.parent.log_message("No data to sync")
+    
+    def export_data(self):
+        """Export ข้อมูลเป็น CSV"""
+        if hasattr(self.parent, 'local_data_manager'):
+            filename = f"weight_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            count = self.parent.local_data_manager.export_to_csv(filename)
+            if count > 0:
+                self.parent.log_message(f"Exported {count} records to {filename}")
+                messagebox.showinfo("Export Success", f"Exported {count} records to {filename}")
+            else:
+                messagebox.showerror("Export Error", "No data to export")
+    
+    def view_local_data(self):
+        """แสดงข้อมูล Local ในหน้าต่างใหม่"""
+        if hasattr(self.parent, 'local_data_manager'):
+            self.parent.show_local_data_window()
+
+class LocalWebServer:
+    def __init__(self, client_gui):
+        self.client_gui = client_gui
+        self.server = None
+        self.server_thread = None
+        self.port = 8080
+        
+    def start_server(self):
+        """เริ่ม Local Web Server"""
+        try:
+            class LocalHandler(BaseHTTPRequestHandler):
+                def __init__(self, *args, **kwargs):
+                    self.client_gui = self.server.client_gui
+                    super().__init__(*args, **kwargs)
+                
+                def do_GET(self):
+                    """จัดการ GET requests"""
+                    if self.path == '/':
+                        self.send_response(200)
+                        self.send_header('Content-type', 'text/html')
+                        self.end_headers()
+                        
+                        # ส่งหน้า HTML ง่ายๆ
+                        html = self.get_local_dashboard()
+                        self.wfile.write(html.encode('utf-8'))
+                        
+                    elif self.path == '/api/weight':
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        
+                        # ส่งข้อมูลน้ำหนักปัจจุบัน
+                        weight_data = {
+                            'weight': self.client_gui.last_weight,
+                            'timestamp': time.time(),
+                            'status': 'local' if self.client_gui.is_offline_mode else 'online'
+                        }
+                        self.wfile.write(json.dumps(weight_data).encode('utf-8'))
+                        
+                    elif self.path == '/api/local-data':
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        
+                        # ส่งข้อมูลจาก Local Database
+                        if hasattr(self.client_gui, 'local_data_manager'):
+                            stats = self.client_gui.local_data_manager.get_local_stats()
+                            self.wfile.write(json.dumps(stats).encode('utf-8'))
+                        else:
+                            self.wfile.write(json.dumps({'error': 'No local data'}).encode('utf-8'))
+                    
+                    elif self.path == '/api/tickets/':
+                        tickets = self.data_manager.get_local_tickets(completed=False)
+                        self._send_response(200, tickets)
+                    elif self.path == '/api/tickets/completed':
+                        tickets = self.data_manager.get_local_tickets(completed=True)
+                        self._send_response(200, tickets)
+                    elif self.path == '/api/tickets/mark-synced':
+                        content_length = int(self.headers['Content-Length'])
+                        post_data = json.loads(self.rfile.read(content_length))
+                        local_id = post_data.get('local_id')
+                        server_id = post_data.get('server_id')
+                        
+                        if not local_id or not server_id:
+                            self._send_response(400, {"error": "Missing local_id or server_id"})
+                            return
+                        
+                        result = self.data_manager.mark_ticket_as_synced(local_id, server_id)
+                        if result:
+                            self._send_response(200, result)
+                        else:
+                            self._send_response(500, {"error": "Failed to mark ticket as synced"})
+                    else:
+                        self._send_response(404, {"error": "Not Found"})
+                
+                def get_local_dashboard(self):
+                    """สร้างหน้า Dashboard ง่ายๆ"""
+                    return f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>RS232 Scale Client - Local Mode</title>
+                        <meta charset="utf-8">
+                        <style>
+                            body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                            .status {{ padding: 10px; margin: 10px 0; border-radius: 5px; }}
+                            .online {{ background-color: #d4edda; color: #155724; }}
+                            .offline {{ background-color: #f8d7da; color: #721c24; }}
+                            .weight {{ font-size: 48px; font-weight: bold; text-align: center; margin: 20px; }}
+                            .data {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; }}
+                        </style>
+                    </head>
+                    <body>
+                        <h1>⚖️ RS232 Scale Client - Local Mode</h1>
+                        
+                        <div class="status {'offline' if self.client_gui.is_offline_mode else 'online'}">
+                            Status: {'🔴 Offline Mode' if self.client_gui.is_offline_mode else '🟢 Online Mode'}
+                        </div>
+                        
+                        <div class="weight">
+                            {self.client_gui.last_weight} kg
+                        </div>
+                        
+                        <div class="data">
+                            <h3>Local Data Statistics</h3>
+                            <div id="stats">Loading...</div>
+                        </div>
+                        
+                        <script>
+                            // อัปเดตข้อมูลทุก 2 วินาที
+                            setInterval(async () => {{
+                                try {{
+                                    const response = await fetch('/api/weight');
+                                    const data = await response.json();
+                                    document.querySelector('.weight').textContent = data.weight + ' kg';
+                                }} catch (e) {{
+                                    console.log('Error fetching weight:', e);
+                                }}
+                            }}, 2000);
+                            
+                            // โหลดสถิติ
+                            async function loadStats() {{
+                                try {{
+                                    const response = await fetch('/api/local-data');
+                                    const stats = await response.json();
+                                    document.getElementById('stats').innerHTML = `
+                                        <p>Total Records: ${{stats.total}}</p>
+                                        <p>Synced: ${{stats.synced}}</p>
+                                        <p>Pending: ${{stats.unsynced}}</p>
+                                    `;
+                                }} catch (e) {{
+                                    console.log('Error fetching stats:', e);
+                                }}
+                            }}
+                            
+                            loadStats();
+                            setInterval(loadStats, 5000);
+                        </script>
+                    </body>
+                    </html>
+                    """
+                
+                def log_message(self, format, *args):
+                    """Override เพื่อไม่ให้ log ข้อความ HTTP"""
+                    pass
+            
+            # สร้าง server
+            self.server = HTTPServer(('localhost', self.port), LocalHandler)
+            self.server.client_gui = self.client_gui
+            
+            # เริ่ม server ใน thread แยก
+            self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+            self.server_thread.start()
+            
+            self.client_gui.log_message(f"Local web server started on http://localhost:{self.port}")
+            
+        except Exception as e:
+            self.client_gui.log_message(f"Error starting local web server: {e}")
+    
+    def stop_server(self):
+        """หยุด Local Web Server"""
+        try:
+            if self.server:
+                self.server.shutdown()
+                self.server.server_close()
+                self.client_gui.log_message("Local web server stopped")
+        except Exception as e:
+            self.client_gui.log_message(f"Error stopping local web server: {e}")
+
+class LocalAPIServer:
+    def __init__(self, data_manager, host='localhost', port=8080):
+        self.data_manager = data_manager
+        self.host = host
+        self.port = port
+        self.server = None
+        self.thread = None
+
+    def start_server(self):
+        if self.thread and self.thread.is_alive():
+            print("Local API server is already running.")
+            return
+
+        handler = self.create_handler()
+        self.server = HTTPServer((self.host, self.port), handler)
+        
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        print(f"Local API server started at http://{self.host}:{self.port}")
+
+    def stop_server(self):
+        if self.server:
+            self.server.shutdown()
+            self.thread.join()
+            print("Local API server stopped.")
+
+    def create_handler(self):
+        data_manager = self.data_manager
+        
+        class LocalAPIHandler(BaseHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                self.data_manager = data_manager
+                super().__init__(*args, **kwargs)
+
+            def _send_cors_headers(self):
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS')
+                self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+
+            def do_OPTIONS(self):
+                self.send_response(204)
+                self._send_cors_headers()
+                self.end_headers()
+
+            def _send_response(self, status_code, data=None):
+                self.send_response(status_code)
+                self.send_header('Content-type', 'application/json')
+                self._send_cors_headers()
+                self.end_headers()
+                if data:
+                    self.wfile.write(json.dumps(data, indent=4).encode('utf-8'))
+
+            def do_GET(self):
+                if self.path == '/api/tickets/':
+                    tickets = self.data_manager.get_local_tickets(completed=False)
+                    self._send_response(200, tickets)
+                elif self.path == '/api/tickets/completed':
+                    tickets = self.data_manager.get_local_tickets(completed=True)
+                    self._send_response(200, tickets)
+                else:
+                    self._send_response(404, {"error": "Not Found"})
+            
+            def do_POST(self):
+                if self.path == '/api/tickets/':
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = json.loads(self.rfile.read(content_length))
+                    
+                    new_ticket = self.data_manager.create_local_ticket(post_data)
+                    if new_ticket:
+                        self._send_response(201, new_ticket)
+                    else:
+                        self._send_response(500, {"error": "Failed to create local ticket"})
+
+                elif self.path == '/api/tickets/mark-synced':
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = json.loads(self.rfile.read(content_length))
+                    local_id = post_data.get('local_id')
+                    server_id = post_data.get('server_id')
+                    
+                    if not local_id or not server_id:
+                        self._send_response(400, {"error": "Missing local_id or server_id"})
+                        return
+                        
+                    result = self.data_manager.mark_ticket_as_synced(local_id, server_id)
+                    if result:
+                        self._send_response(200, result)
+                    else:
+                        self._send_response(500, {"error": "Failed to mark ticket as synced"})
+                
+                else:
+                    self._send_response(404, {"error": "Not Found"})
+
+            def do_PATCH(self):
+                path_parts = self.path.split('/')
+                if len(path_parts) == 4 and path_parts[1] == 'api' and path_parts[2] == 'tickets':
+                    ticket_id = path_parts[3]
+                    content_length = int(self.headers['Content-Length'])
+                    patch_data = json.loads(self.rfile.read(content_length))
+                    
+                    updated_ticket = self.data_manager.update_local_ticket_weigh_out(ticket_id, patch_data)
+                    
+                    if updated_ticket:
+                        self._send_response(200, updated_ticket)
+                    else:
+                        self._send_response(404, {"error": f"Ticket with id {ticket_id} not found or could not be updated."})
+                else:
+                    self._send_response(404, {"error": "Not Found"})
+
+        return LocalAPIHandler
+
+# ... existing code ...
 
 if __name__ == '__main__':
     try:
