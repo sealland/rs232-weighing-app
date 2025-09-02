@@ -72,6 +72,11 @@ SCALE_PATTERNS = {
         ("US,GS", r"(US),GS,\+([0-9]+\.?[0-9]*)kg", False),  # น้ำหนัก Unstable เช่น US,GS,+123.4kg
         ("ST,GS", r"(ST),GS,\+0{3,}\.?0*kg", True),          # น้ำหนัก 0 Stable เช่น ST,GS,+00000.0kg
         ("US,GS", r"(US),GS,\+0{3,}\.?0*kg", True),          # น้ำหนัก 0 Unstable เช่น US,GS,+00000.0kg
+        # เพิ่ม pattern สำหรับข้อมูลที่อาจถูกตัดขาด
+        ("ST,GS", r"(ST),GS,\+([0-9]+\.?[0-9]*)$", False),   # น้ำหนัก Stable ที่ถูกตัดขาด
+        ("US,GS", r"(US),GS,\+([0-9]+\.?[0-9]*)$", False),   # น้ำหนัก Unstable ที่ถูกตัดขาด
+        ("ST,GS", r"(ST),GS,\+0{3,}\.?0*$", True),           # น้ำหนัก 0 Stable ที่ถูกตัดขาด
+        ("US,GS", r"(US),GS,\+0{3,}\.?0*$", True),           # น้ำหนัก 0 Unstable ที่ถูกตัดขาด
     ],
     'Mettler Toledo': [
         ("MT", r"MT\s+(\d+)", False),
@@ -158,6 +163,10 @@ class RS232ClientGUI:
         
         # เพิ่ม Local Web Server
         self.local_web_server = LocalWebServer(self)
+
+        # เพิ่ม Local API Server
+        self.local_api_server = LocalAPIServer(self.local_data_manager)
+        
         
         # สร้าง UI ก่อน
         self.setup_ui()
@@ -361,32 +370,36 @@ class RS232ClientGUI:
         right_panel = ttk.Frame(main_frame)
         right_panel.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(5, 0))
         right_panel.columnconfigure(0, weight=1)
-        right_panel.rowconfigure(1, weight=1) # Real-time frame
+        right_panel.columnconfigure(1, weight=1)
+        right_panel.rowconfigure(1, weight=1) 
         self.right_panel = right_panel
 
         # Status Frame
         status_frame = ttk.LabelFrame(right_panel, text="Status & Monitoring", padding="8")
-        status_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        status_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 8))
         status_frame.columnconfigure(0, weight=1)
         
         # Status indicators
         status_indicators_frame = ttk.Frame(status_frame)
         status_indicators_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        status_indicators_frame.columnconfigure(0, weight=3) 
+        status_indicators_frame.columnconfigure(1, weight=3)
+        status_indicators_frame.columnconfigure(2, weight=4)
         
         # Serial status
         self.serial_status_label = ttk.Label(status_indicators_frame, text="🔴 Serial: Disconnected", 
                                             font=('Tahoma', 9, 'bold'))
-        self.serial_status_label.grid(row=0, column=0, padx=(0, 15))
+        self.serial_status_label.grid(row=0, column=0, sticky=tk.W)
         
         # Server status
         self.server_status_label = ttk.Label(status_indicators_frame, text="🔴 Server: Disconnected", 
                                             font=('Tahoma', 9, 'bold'))
-        self.server_status_label.grid(row=0, column=1, padx=(0, 15))
+        self.server_status_label.grid(row=0, column=1, sticky=tk.W)
         
         # Current weight
         self.weight_label = ttk.Label(status_indicators_frame, text="⚖️ Weight: 0 kg", 
                                     font=('Tahoma', 11, 'bold'))
-        self.weight_label.grid(row=0, column=2)
+        self.weight_label.grid(row=0, column=2, sticky=tk.E)
         
         # Log area
         log_frame = ttk.Frame(status_frame)
@@ -402,24 +415,25 @@ class RS232ClientGUI:
         
         # Real-time RS232 Data Display Frame
         realtime_frame = ttk.LabelFrame(right_panel, text="🔍 Real-time RS232 Data", padding="8")
-        realtime_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 8))
+        realtime_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 8))
         realtime_frame.columnconfigure(0, weight=1)
         realtime_frame.rowconfigure(1, weight=1)
         
         # Real-time data controls
         realtime_controls_frame = ttk.Frame(realtime_frame)
         realtime_controls_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+        realtime_controls_frame.columnconfigure((0,1,2,3,4,5), weight=1) # ให้ทุกคอลัมน์ขยายเท่ากัน
         
         # Start/Stop real-time monitoring button
         self.realtime_monitor_var = tk.BooleanVar(value=False)
         self.realtime_monitor_btn = ttk.Button(realtime_controls_frame, text="▶️ Start Monitoring", 
-                                             command=self.toggle_realtime_monitoring, width=10)
-        self.realtime_monitor_btn.grid(row=0, column=0, padx=(0, 3))
+                                             command=self.toggle_realtime_monitoring)
+        self.realtime_monitor_btn.grid(row=0, column=0, padx=(0, 3), sticky=tk.EW)
         
         # Clear real-time data button
-        clear_realtime_btn = ttk.Button(realtime_controls_frame, text="🗑️ Clear Data", 
-                                      command=self.clear_realtime_data, width=12)
-        clear_realtime_btn.grid(row=0, column=1, padx=(0, 5))
+        clear_realtime_btn = ttk.Button(realtime_controls_frame, text="🗑️ Clear", 
+                                      command=self.clear_realtime_data)
+        clear_realtime_btn.grid(row=0, column=1, padx=(0, 5), sticky=tk.EW)
         
         # Auto-scroll checkbox
         self.auto_scroll_var = tk.BooleanVar(value=True)
@@ -428,16 +442,18 @@ class RS232ClientGUI:
         auto_scroll_check.grid(row=0, column=2, padx=(0, 5))
         
         # Max lines display
-        ttk.Label(realtime_controls_frame, text="Max lines:", font=('Tahoma', 7)).grid(row=0, column=3, padx=(0, 2))
+        max_lines_frame = ttk.Frame(realtime_controls_frame)
+        max_lines_frame.grid(row=0, column=3, columnspan=2, sticky=tk.W)
+        ttk.Label(max_lines_frame, text="Max lines:", font=('Tahoma', 7)).pack(side=tk.LEFT)
         self.max_lines_var = tk.StringVar(value="100")
-        max_lines_spinbox = ttk.Spinbox(realtime_controls_frame, from_=10, to=1000, 
-                                       textvariable=self.max_lines_var, width=8, font=('Tahoma', 7))
-        max_lines_spinbox.grid(row=0, column=4, padx=(0, 5))
+        max_lines_spinbox = ttk.Spinbox(max_lines_frame, from_=10, to=1000, 
+                                       textvariable=self.max_lines_var, width=6, font=('Tahoma', 7))
+        max_lines_spinbox.pack(side=tk.LEFT)
         
         # Export button
         export_btn = ttk.Button(realtime_controls_frame, text="📁 Export", 
-                               command=self.export_realtime_data, width=10)
-        export_btn.grid(row=0, column=5)
+                               command=self.export_realtime_data)
+        export_btn.grid(row=0, column=5, sticky=tk.EW)
         
         # Bind events
         max_lines_spinbox.bind('<KeyRelease>', self.on_max_lines_change)
@@ -467,7 +483,7 @@ class RS232ClientGUI:
         
         # Control Buttons Frame
         control_frame = ttk.LabelFrame(right_panel, text="Main Controls", padding="8")
-        control_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        control_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 8), padx=(0, 4))
         control_frame.columnconfigure((0, 1, 2, 3), weight=1)
 
         self.start_btn = ttk.Button(control_frame, text="▶️ Start", command=self.start_client)
@@ -484,13 +500,13 @@ class RS232ClientGUI:
         
         # App & Help Buttons Frame
         app_help_frame = ttk.LabelFrame(right_panel, text="Application", padding="8")
-        app_help_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        app_help_frame.grid(row=2, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 8), padx=(4, 0))
         app_help_frame.columnconfigure((0, 1, 2), weight=1)
 
-        self.frontend_btn = ttk.Button(app_help_frame, text="🌐 Open Frontend", command=self.open_frontend, style='Accent.TButton')
+        self.frontend_btn = ttk.Button(app_help_frame, text="🌐 Frontend", command=self.open_frontend, style='Accent.TButton')
         self.frontend_btn.grid(row=0, column=0, padx=2, sticky=tk.EW)
         
-        self.tray_btn = ttk.Button(app_help_frame, text="📌 Hide to Tray", command=self.minimize_to_tray)
+        self.tray_btn = ttk.Button(app_help_frame, text="📌 Tray", command=self.minimize_to_tray)
         self.tray_btn.grid(row=0, column=1, padx=2, sticky=tk.EW)
         
         help_btn = ttk.Button(app_help_frame, text="❓ Help", command=self.show_main_help)
@@ -498,7 +514,7 @@ class RS232ClientGUI:
         
         # Debugging Buttons Frame
         debug_frame = ttk.LabelFrame(right_panel, text="Debugging Tools", padding="8")
-        debug_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        debug_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 8), padx=(0, 4))
         debug_frame.columnconfigure((0, 1), weight=1)
 
         debug_btn = ttk.Button(debug_frame, text="🐛 Debug Serial", command=self.debug_serial_reading)
@@ -506,6 +522,12 @@ class RS232ClientGUI:
         
         pattern_test_btn = ttk.Button(debug_frame, text="🔍 Test Pattern", command=self.test_pattern_parsing)
         pattern_test_btn.grid(row=0, column=1, padx=2, sticky=tk.EW)
+
+        # Update displays and right_panel column weights
+        right_panel.columnconfigure(0, weight=1)
+        right_panel.columnconfigure(1, weight=1)
+        self.update_branch_prefix_display()
+        self.update_scale_pattern_info()
 
     def show_help(self):
         """แสดงหน้าต่าง Help"""
@@ -703,75 +725,52 @@ class RS232ClientGUI:
         """เปิด/ปิดการ monitor ข้อมูล real-time"""
         try:
             if not self.realtime_monitoring_active:
-                # ตรวจสอบการเชื่อมต่อ Serial ก่อน
+                self.log_message("Attempting to start real-time monitoring...")
                 ser = self.get_serial_connection()
-                if not ser:
-                    messagebox.showwarning("Warning", "Serial connection not available!\nPlease check your connection first.")
+                if not ser or not ser.is_open:
+                    messagebox.showwarning("Warning", "Serial connection not available or not open!")
+                    self.log_message("Failed to start monitoring: Serial connection is not open.")
                     return
                 
-                # เริ่มการ monitor
                 self.realtime_monitoring_active = True
-                self.realtime_monitor_var.set(True)
                 self.realtime_monitor_btn.config(text="⏸️ Stop Monitoring")
-                self.realtime_info_label.config(text="📊 Monitoring RS232 data in real-time...", foreground='green')
-                self.log_message("Real-time monitoring started")
-                
-                # เริ่ม timer สำหรับอ่านข้อมูลและอัปเดตการแสดงผล
+                self.realtime_info_label.config(text="📊 Monitoring...", foreground='green')
+                self.log_message("Real-time monitoring started.")
                 self.start_realtime_reading()
             else:
-                # หยุดการ monitor
                 self.realtime_monitoring_active = False
-                self.realtime_monitor_var.set(False)
                 self.realtime_monitor_btn.config(text="▶️ Start Monitoring")
-                self.realtime_info_label.config(text="📊 Real-time monitoring stopped", foreground='gray')
-                self.log_message("Real-time monitoring stopped")
-                
-                # หยุด timer
+                self.realtime_info_label.config(text="📊 Monitoring stopped.", foreground='gray')
+                self.log_message("Real-time monitoring stopped.")
                 if self.realtime_update_timer:
                     self.root.after_cancel(self.realtime_update_timer)
                     self.realtime_update_timer = None
         except Exception as e:
-            self.log_message(f"Toggle real-time monitoring error: {e}")
+            self.log_message(f"Error in toggle_realtime_monitoring: {e}")
 
     def start_realtime_reading(self):
         """เริ่มการอ่านข้อมูล real-time"""
+        if not self.realtime_monitoring_active:
+            return
+        
         try:
-            if not self.realtime_monitoring_active:
-                return
-                
             ser = self.get_serial_connection()
-            if ser:
-                # อ่านข้อมูลที่มีอยู่ใน buffer
-                if ser.in_waiting > 0:
-                    new_bytes = ser.read(ser.in_waiting)
-                    if new_bytes:
-                        self.add_realtime_data(new_bytes)
-                        # ลบการแสดง Hex และ ASCII
-                        self.log_message(f"Real-time data: {new_bytes.decode('latin-1', errors='ignore')}")
-                
-                # ลองอ่านข้อมูลใหม่
-                try:
-                    original_timeout = ser.timeout
-                    ser.timeout = 0.1  # 100ms timeout
-                    new_bytes = ser.read(100)
-                    if new_bytes:
-                        self.add_realtime_data(new_bytes)
-                        # ลบการแสดง Hex และ ASCII
-                        self.log_message(f"New real-time data: {new_bytes.decode('latin-1', errors='ignore')}")
-                    ser.timeout = original_timeout
-                except Exception as e:
-                    # ไม่มีข้อมูลใหม่ ไม่เป็นไร
-                    pass
+            if ser and ser.in_waiting > 0:
+                new_bytes = ser.read(ser.in_waiting)
+                if new_bytes:
+                    self.log_message(f"Read {len(new_bytes)} bytes from serial port.")
+                    self.add_realtime_data(new_bytes)
+                else:
+                    self.log_message("in_waiting > 0 but read() returned no bytes.")
             
-            # ตั้งเวลาเรียกฟังก์ชันนี้อีกครั้ง (ทุก 200ms)
             self.realtime_update_timer = self.root.after(200, self.start_realtime_reading)
             
         except Exception as e:
-            self.log_message(f"Real-time reading error: {e}")
-            # ตั้งเวลาเรียกฟังก์ชันนี้อีกครั้งแม้เกิดข้อผิดพลาด
-            self.realtime_update_timer = self.root.after(200, self.start_realtime_reading)
+            self.log_message(f"Error in start_realtime_reading: {e}")
+            self.realtime_monitoring_active = False
+            self.realtime_monitor_btn.config(text="▶️ Start Monitoring")
+            self.realtime_info_label.config(text="⚠️ Error! Monitoring stopped.", foreground='red')
 
-        
     def clear_realtime_data(self):
         """ล้างข้อมูล real-time"""
         try:
@@ -1551,14 +1550,57 @@ class RS232ClientGUI:
                 non_zero_values = [val for val in extracted_weight_values if val != "0" and val != "0.0"]
                 if non_zero_values:
                     weight_result = non_zero_values[-1]
+                    self.log_message(f"Parsed weight from complete pattern: {cleaned_text} -> {weight_result}")
                     # บันทึกใน Local Database
                     self.save_weight_locally(weight_result)
                     return weight_result
                 elif "0" in extracted_weight_values or "0.0" in extracted_weight_values:
                     weight_result = "0"
+                    self.log_message(f"Parsed zero weight from complete pattern: {cleaned_text} -> {weight_result}")
                     # บันทึกใน Local Database
                     self.save_weight_locally(weight_result)
                     return weight_result
+            
+            # เพิ่มการตรวจสอบข้อมูลที่อาจถูกตัดขาด
+            if selected_pattern == 'ST,GS Format':
+                # ตรวจสอบว่ามีข้อมูล ST,GS หรือ US,GS ที่ไม่สมบูรณ์หรือไม่
+                if 'ST,GS' in cleaned_text or 'US,GS' in cleaned_text:
+                    # ลองหา pattern ที่ไม่สมบูรณ์
+                    incomplete_patterns = [
+                        (r"ST,GS,\+([0-9]+\.?[0-9]*)$", False),
+                        (r"US,GS,\+([0-9]+\.?[0-9]*)$", False),
+                        (r"ST,GS,\+0{3,}\.?0*$", True),
+                        (r"US,GS,\+0{3,}\.?0*$", True),
+                    ]
+                    
+                    for pattern_regex, is_zero_indicator in incomplete_patterns:
+                        matches = re.findall(pattern_regex, cleaned_text)
+                        if matches:
+                            if is_zero_indicator:
+                                weight_result = "0"
+                                self.log_message(f"Found incomplete zero weight pattern: {cleaned_text}")
+                                self.save_weight_locally(weight_result)
+                                return weight_result
+                            else:
+                                try:
+                                    num_str_from_match = matches[0] if isinstance(matches[0], str) else matches[0][0]
+                                    if '.' in num_str_from_match:
+                                        weight_val = float(num_str_from_match)
+                                    else:
+                                        weight_val = float(int(num_str_from_match))
+                                    
+                                    # ใช้ความไวในการกรองข้อมูล
+                                    sensitivity = float(self.sensitivity_var.get())
+                                    if abs(weight_val) < sensitivity:
+                                        weight_val = 0.0
+                                    
+                                    weight_result = str(weight_val)
+                                    self.log_message(f"Found incomplete weight pattern: {cleaned_text} -> {weight_result}")
+                                    self.save_weight_locally(weight_result)
+                                    return weight_result
+                                except ValueError:
+                                    pass
+            
             return "N/A"
         except Exception as e:
             self.log_message(f"Parse error: {e}")
@@ -1616,7 +1658,7 @@ class RS232ClientGUI:
             # สร้างหน้าต่างใหม่
             local_window = tk.Toplevel(self.root)
             local_window.title("Local Weight Data")
-            local_window.geometry("800x600")
+            local_window.geometry("800x500")
             
             # สร้าง Treeview สำหรับแสดงข้อมูล
             columns = ('ID', 'Weight', 'Timestamp', 'Status', 'Branch', 'Scale Pattern', 'Synced')
@@ -1840,11 +1882,11 @@ class RS232ClientGUI:
                             # ถ้าเกิดข้อผิดพลาด ให้ล้าง buffer ทั้งหมด
                             self.read_buffer = b''
                     
-                    # ถ้า buffer ใหญ่เกินไป ให้ล้างบางส่วน
-                    if len(self.read_buffer) > 1500:
-                        # เก็บข้อมูลล่าสุด 500 bytes
-                        self.read_buffer = self.read_buffer[-500:]
-                        self.log_message("Buffer trimmed due to size")
+                    # ปรับปรุงการจัดการ buffer สำหรับข้อมูลที่ส่งมาอย่างต่อเนื่อง
+                    if len(self.read_buffer) > 2000:  # เพิ่มขนาด buffer limit
+                        # เก็บข้อมูลล่าสุด 1000 bytes แทนที่จะเป็น 500
+                        self.read_buffer = self.read_buffer[-1000:]
+                        self.log_message("Buffer trimmed due to size (increased limit)")
                         
                         # หลังจาก trim buffer แล้ว ให้ประมวลผลข้อมูลใหม่
                         try:
@@ -1893,30 +1935,47 @@ class RS232ClientGUI:
 
 # ... existing code ...
     def start_client(self):
-        """เริ่มต้น client"""
-        if self.is_running:
-            return
+        """เริ่ม client"""
+        try:
+            # ตรวจสอบการเชื่อมต่อ Serial ก่อนเริ่ม
+            if not self.test_connection_status():
+                messagebox.showwarning("Warning", "Serial port is not available!\nPlease check your connection and settings.")
+                return
+                
+            self.is_running = True
+            self.start_btn.config(state='disabled')
+            self.stop_btn.config(state='normal')
             
-        # ตรวจสอบการเชื่อมต่อ Serial ก่อนเริ่ม
-        if not self.test_connection_status():
-            messagebox.showwarning("Warning", "Serial port is not available!\nPlease check your connection and settings.")
-            return
+            # เริ่ม Local Web Server
+            self.local_web_server.start_server()
             
-        self.is_running = True
-        self.start_btn.config(state='disabled')
-        self.stop_btn.config(state='normal')
-        
-        # เริ่ม Local Web Server
-        self.local_web_server.start_server()
-        
-        # เริ่ม Local API Server
-        self.local_api_server.start_server()
-        
-        # เริ่ม thread สำหรับการทำงาน
-        self.client_thread = threading.Thread(target=self.run_client_async, daemon=True)
-        self.client_thread.start()
-        
-        self.log_message("Client started")
+            # เริ่ม Local API Server
+            self.local_api_server.start_server()
+            
+            # เริ่มเชื่อมต่อ WebSocket ไปยัง server ที่กำหนด
+            try:
+                server_url = self.server_url_var.get().strip()
+                if not server_url:
+                    messagebox.showerror("Error", "Please enter server URL!")
+                    return
+                    
+                self.log_message(f"Connecting to WebSocket server: {server_url}")
+                
+                # เริ่ม thread สำหรับการทำงาน
+                self.client_thread = threading.Thread(target=self.run_client_async, daemon=True)
+                self.client_thread.start()
+                
+                self.log_message("Client started and connecting to server...")
+                
+            except Exception as e:
+                self.log_message(f"Error starting client: {e}")
+                messagebox.showerror("Error", f"Failed to start client: {e}")
+                self.stop_client()
+                
+        except Exception as e:
+            self.log_message(f"Start client error: {e}")
+            messagebox.showerror("Error", f"Failed to start client: {e}")
+            self.stop_client()
 
         
     def test_raw_reading(self):
@@ -3032,7 +3091,7 @@ class LocalDataManager:
             # สร้างหน้าต่างใหม่
             local_window = tk.Toplevel(self.root)
             local_window.title("Local Weight Data")
-            local_window.geometry("800x600")
+            local_window.geometry("800x500")
             
             # สร้าง Treeview สำหรับแสดงข้อมูล
             columns = ('ID', 'Weight', 'Timestamp', 'Status', 'Branch', 'Scale Pattern', 'Synced')
@@ -3256,11 +3315,11 @@ class LocalDataManager:
                             # ถ้าเกิดข้อผิดพลาด ให้ล้าง buffer ทั้งหมด
                             self.read_buffer = b''
                     
-                    # ถ้า buffer ใหญ่เกินไป ให้ล้างบางส่วน
-                    if len(self.read_buffer) > 1500:
-                        # เก็บข้อมูลล่าสุด 500 bytes
-                        self.read_buffer = self.read_buffer[-500:]
-                        self.log_message("Buffer trimmed due to size")
+                    # ปรับปรุงการจัดการ buffer สำหรับข้อมูลที่ส่งมาอย่างต่อเนื่อง
+                    if len(self.read_buffer) > 2000:  # เพิ่มขนาด buffer limit
+                        # เก็บข้อมูลล่าสุด 1000 bytes แทนที่จะเป็น 500
+                        self.read_buffer = self.read_buffer[-1000:]
+                        self.log_message("Buffer trimmed due to size (increased limit)")
                         
                         # หลังจาก trim buffer แล้ว ให้ประมวลผลข้อมูลใหม่
                         try:
@@ -4069,56 +4128,59 @@ class OfflineModeUI:
     
     def setup_offline_ui(self):
         """สร้าง UI สำหรับ Offline Mode ภายใน parent_frame"""
-        self.offline_frame = ttk.LabelFrame(self.parent_frame, text="🔄 Offline Mode & Local Storage")
-        # จัดวาง UI ของ Offline ต่อจาก debug_frame ที่ row 5
-        self.offline_frame.grid(row=5, column=0, sticky=(tk.W, tk.E), padx=0, pady=5)
-        self.offline_frame.columnconfigure(1, weight=1)
-        # ... (rest of method is correct) ...
+        self.offline_frame = ttk.LabelFrame(self.parent_frame, text="🔄 Offline Mode")
+        # จัดวาง UI ของ Offline ต่อจาก Debugging Tools ที่ row 3, column 1
+        self.offline_frame.grid(row=3, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(4, 0), pady=(0, 8))
+        self.offline_frame.columnconfigure(0, weight=1)
 
+        # --- ADDING WIDGET CREATION BACK ---
         # สถานะการเชื่อมต่อ
         self.connection_status = ttk.Label(
             self.offline_frame, 
             text="🔴 Offline - Local Mode Active",
             foreground="red",
-            font=("Arial", 10, "bold")
+            font=("Arial", 9, "bold")
         )
-        self.connection_status.grid(row=0, column=0, columnspan=2, pady=5)
-        
         # แสดงข้อมูล Local
         self.local_data_label = ttk.Label(
             self.offline_frame,
             text="Local Records: 0 | Synced: 0 | Unsynced: 0"
         )
-        self.local_data_label.grid(row=1, column=0, columnspan=2, pady=5)
-        
         # Frame สำหรับปุ่มต่างๆ
         button_frame = ttk.Frame(self.offline_frame)
-        button_frame.grid(row=2, column=0, columnspan=2, pady=5)
         
         # ปุ่ม Sync ข้อมูล
         self.sync_button = ttk.Button(
             button_frame,
-            text="🔄 Sync Data",
+            text="🔄 Sync",
             command=self.sync_data,
             style="Accent.TButton"
         )
-        self.sync_button.grid(row=0, column=0, padx=5)
-        
         # ปุ่ม Export CSV
         self.export_button = ttk.Button(
             button_frame,
-            text="📊 Export CSV",
+            text="📊 Export",
             command=self.export_data
         )
-        self.export_button.grid(row=0, column=1, padx=5)
-        
         # ปุ่ม View Local Data
         self.view_button = ttk.Button(
             button_frame,
-            text="👁️ View Data",
+            text="👁️ View",
             command=self.view_local_data
         )
-        self.view_button.grid(row=0, column=2, padx=5)
+        # --- END OF WIDGET CREATION ---
+
+        self.connection_status.grid(row=0, column=0, columnspan=3, pady=2)
+        self.local_data_label.grid(row=1, column=0, columnspan=3, pady=2)
+        button_frame.grid(row=2, column=0, columnspan=3, pady=2, sticky=tk.EW)
+        
+        self.sync_button.grid(row=0, column=0, padx=2, sticky=tk.EW)
+        self.export_button.grid(row=0, column=1, padx=2, sticky=tk.EW)
+        self.view_button.grid(row=0, column=2, padx=2, sticky=tk.EW)
+        
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
+        button_frame.columnconfigure(2, weight=1)
 
     def update_connection_status(self, is_online):
         """อัปเดตสถานะการเชื่อมต่อ"""
