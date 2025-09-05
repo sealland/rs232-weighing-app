@@ -49,6 +49,9 @@ const isOfflineModalVisible = ref(false); // State สำหรับเปิ�
 // เพิ่ม state สำหรับการเลือกการดำเนินการ
 const printAction = ref('preview') // 'preview', 'print', หรือ 'download'
 
+// เพิ่ม state สำหรับ branch prefix
+const branchPrefix = ref('WE') // หรือค่าอื่นๆ ตามที่ต้องการ
+
 // --- Computed Property ---
 const activeApiUrl = computed(() => {
   return isOnline.value ? API_BASE_URL : API_OFFLINE_URL;
@@ -75,6 +78,101 @@ function getReportTypeText(ticket) {
   }
 }
 
+// --- ฟังก์ชันสำหรับจัดรูปแบบเวลา ---
+function formatTime(timeString) {
+  if (!timeString) return 'N/A';
+  
+  try {
+    // ถ้าเป็น string ให้แปลงเป็น Date object
+    const date = new Date(timeString);
+    
+    // ตรวจสอบว่า date ถูกต้องหรือไม่
+    if (isNaN(date.getTime())) {
+      return timeString; // ถ้าแปลงไม่ได้ให้คืนค่าเดิม
+    }
+    
+    // จัดรูปแบบเป็น HH:MM:SS
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    const seconds = date.getSeconds().toString().padStart(2, '0');
+    
+    return `${hours}:${minutes}:${seconds}`;
+  } catch (error) {
+    console.error('Error formatting time:', error);
+    return timeString; // ถ้าเกิด error ให้คืนค่าเดิม
+  }
+}
+
+
+// --- ฟังก์ชันสำหรับยกเลิกบัตรชั่ง ---
+function cancelTicket(ticketId) {
+  handleCancelTicket();
+}
+
+// --- ฟังก์ชันสำหรับเปิด Continuous Weighing Modal ---
+function openContinuousWeighingModal() {
+  handleStartContinuousWeighing();
+}
+
+// --- ฟังก์ชันสำหรับอัปเดตน้ำหนักออก ---
+function updateTicketWeighOut(ticketId) {
+  handleWeighOut();
+}
+
+// --- ฟังก์ชันสำหรับพิมพ์รายงาน ---
+function printReport(ticketId, action) {
+  printAction.value = action;
+  handlePrintReport();
+}
+
+// --- ฟังก์ชันสำหรับปิด Detail Modal ---
+function closeDetailModal() {
+  closeModal();
+}
+
+// --- ฟังก์ชันสำหรับปิด Create Modal ---
+function closeCreateModal() {
+  closeCreateTicketModal();
+}
+
+// --- ฟังก์ชันสำหรับจัดการการอัปเดตบัตรชั่ง ---
+function handleUpdateTicket(eventData) {
+  console.log("🔧 handleUpdateTicket called with:", eventData);
+  console.log("🔧 Event data type:", typeof eventData);
+  console.log("🔧 Event data keys:", Object.keys(eventData || {}));
+  handleTicketUpdate(eventData);
+}
+
+// --- ฟังก์ชันสำหรับรีเฟรชข้อมูลทั้งหมด ---
+async function refreshAllData() {
+  await Promise.all([
+    fetchOpenTickets(selectedDate.value),
+    fetchCompletedTickets(selectedDate.value)
+  ]);
+}
+
+// --- ฟังก์ชันสำหรับจัดการการเปลี่ยนแปลงวันที่ ---
+async function onDateChanged() {
+  // ตรวจสอบว่ามีวันที่ที่ถูกต้องหรือไม่
+  if (!selectedDate.value || selectedDate.value.trim() === '') {
+    // ถ้าไม่มีวันที่ ให้ใช้วันที่ปัจจุบัน
+    selectedDate.value = new Date().toISOString().split('T')[0];
+  }
+  
+  // ล้าง error ก่อนดึงข้อมูลใหม่
+  apiError.value = null;
+  
+  await refreshAllData();
+}
+
+// --- ฟังก์ชันสำหรับดึงข้อมูลตามวันที่ ---
+async function fetchDataForDate(dateStr) {
+  await Promise.all([
+    fetchOpenTickets(dateStr),
+    fetchCompletedTickets(dateStr)
+  ]);
+}
+
 // --- API & WebSocket Config ---
 // const API_BASE_URL = 'http://192.168.132.7:8000';
 // const WEBSOCKET_URL = 'ws://localhost:8765';
@@ -82,22 +180,58 @@ function getReportTypeText(ticket) {
 // --- Functions: Data Fetching ---
 async function fetchOpenTickets(dateStr) {
   try {
-    const response = await fetch(`${activeApiUrl.value}/api/tickets/?target_date=${dateStr}`)
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
-    openTickets.value = await response.json()
+    // ตรวจสอบและใช้วันที่ปัจจุบันถ้า dateStr ว่างหรือไม่ถูกต้อง
+    const validDate = dateStr && dateStr.trim() !== '' ? dateStr : new Date().toISOString().split('T')[0];
+    
+    console.log(`Fetching open tickets for date: ${validDate} from: ${activeApiUrl.value}`);
+    
+    // สร้าง URL ที่ถูกต้องตาม API specification
+    const url = new URL(`${activeApiUrl.value}/api/tickets/`);
+    url.searchParams.append('target_date', validDate);
+    
+    const response = await fetch(url.toString());
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`API Error ${response.status}:`, errorText);
+      throw new Error(`HTTP error! status: ${response.status} - ${errorText}`);
+    }
+    
+    const data = await response.json();
+    openTickets.value = data;
+    console.log(`Successfully fetched ${data.length} open tickets`);
   } catch (error) {
     console.error("Could not fetch open tickets:", error)
     apiError.value = "ไม่สามารถดึงข้อมูลบัตรชั่ง 'กำลังดำเนินการ' ได้"
+    openTickets.value = []; // ล้างข้อมูลเก่า
   }
 }
 async function fetchCompletedTickets(dateStr) {
   try {
-    const response = await fetch(`${activeApiUrl.value}/api/tickets/completed?target_date=${dateStr}`)
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
-    completedTickets.value = await response.json()
+    // ตรวจสอบและใช้วันที่ปัจจุบันถ้า dateStr ว่างหรือไม่ถูกต้อง
+    const validDate = dateStr && dateStr.trim() !== '' ? dateStr : new Date().toISOString().split('T')[0];
+    
+    console.log(`Fetching completed tickets for date: ${validDate} from: ${activeApiUrl.value}`);
+    
+    // สร้าง URL ที่ถูกต้องตาม API specification
+    const url = new URL(`${activeApiUrl.value}/api/tickets/completed`);
+    url.searchParams.append('target_date', validDate);
+    
+    const response = await fetch(url.toString());
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`API Error ${response.status}:`, errorText);
+      throw new Error(`HTTP error! status: ${response.status} - ${errorText}`);
+    }
+    
+    const data = await response.json();
+    completedTickets.value = data;
+    console.log(`Successfully fetched ${data.length} completed tickets`);
   } catch (error) {
     console.error("Could not fetch completed tickets:", error)
     apiError.value = "ไม่สามารถดึงข้อมูลบัตรชั่ง 'เสร็จสิ้นแล้ว' ได้"
+    completedTickets.value = []; // ล้างข้อมูลเก่า
   }
 }
 async function fetchCarQueue() {
@@ -170,15 +304,33 @@ async function createTicket(ticketData) {
 }
 
 async function showTicketDetails(ticket_id) {
+  console.log(`🔍 showTicketDetails called with ticket_id: ${ticket_id}`);
+  console.log(`🔍 activeApiUrl.value: ${activeApiUrl.value}`);
+  console.log(`🔍 isModalVisible before: ${isModalVisible.value}`);
+  
   selectTicket(ticket_id);
   try {
-    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticket_id}`);
-    if (!response.ok) throw new Error(`Ticket not found`);
-    detailTicket.value = await response.json();
+    const url = `${activeApiUrl.value}/api/tickets/${ticket_id}`;
+    console.log(`🔍 Fetching ticket details from: ${url}`);
+    
+    const response = await fetch(url);
+    console.log(`🔍 Response status: ${response.status}`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`🔍 API Error ${response.status}:`, errorText);
+      throw new Error(`Ticket not found: ${response.status} - ${errorText}`);
+    }
+    
+    const data = await response.json();
+    console.log('🔍 Ticket details fetched successfully:', data);
+    detailTicket.value = data;
     isModalVisible.value = true;
+    console.log(`🔍 isModalVisible after: ${isModalVisible.value}`);
+    console.log(`🔍 detailTicket.value:`, detailTicket.value);
   } catch (error) {
-    console.error("Failed to fetch ticket details:", error);
-    alert("ไม่สามารถดึงข้อมูลรายละเอียดได้");
+    console.error("🔍 Failed to fetch ticket details:", error);
+    alert(`ไม่สามารถดึงข้อมูลรายละเอียดได้: ${error.message}`);
   }
 }
 function closeModal() {
@@ -193,7 +345,7 @@ async function selectTicket(ticketId) {
     selectedTicketId.value = ticketId;
     // ดึงข้อมูลรายละเอียดของบัตรชั่งที่เลือก
     try {
-      const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}`);
+      const response = await fetch(`${activeApiUrl.value}/api/tickets/${ticketId}`);
       if (response.ok) {
         selectedTicketDetail.value = await response.json();
         console.log('Selected ticket detail:', selectedTicketDetail.value);
@@ -271,7 +423,7 @@ function handleStartContinuousWeighing() {
 async function handleCreateTicket(ticketData) {
   isCreatingTicket.value = true;
   try {
-    const response = await fetch(`${API_BASE_URL}/api/tickets/`, {
+    const response = await fetch(`${activeApiUrl.value}/api/tickets/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(ticketData),
@@ -300,7 +452,7 @@ async function handleWeighOut() {
   isUpdatingTicket.value = true;
   const ticketIdToUpdate = selectedTicketId.value;
   try {
-    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketIdToUpdate}/weigh-out`, {
+    const response = await fetch(`${activeApiUrl.value}/api/tickets/${ticketIdToUpdate}/weigh-out`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ WE_WEIGHTOUT: weightOutValue }),
@@ -352,7 +504,7 @@ async function handleCancelTicket() {
   isCancellingTicket.value = true;
   const ticketIdToCancel = selectedTicketId.value;
   try {
-    const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketIdToCancel}/cancel`, {
+    const response = await fetch(`${activeApiUrl.value}/api/tickets/${ticketIdToCancel}/cancel`, {
       method: 'DELETE',
     });
     if (!response.ok) throw new Error('Server error during cancellation!');
@@ -411,7 +563,7 @@ async function handlePrintReport() {
     
     if (!ticketDetail) {
       // ดึงข้อมูลรายละเอียดของบัตรชั่งเพื่อตรวจสอบรายการสินค้า
-      const response = await fetch(`${API_BASE_URL}/api/tickets/${selectedTicketId.value}`);
+      const response = await fetch(`${activeApiUrl.value}/api/tickets/${selectedTicketId.value}`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -476,7 +628,7 @@ async function printReportFromClient(ticketId, reportType, hasItems) {
     console.log('Backend print failed, trying auto download...');
     
     // ใช้ proxy endpoint แทนการเรียก URL โดยตรง
-    const proxyUrl = `${API_BASE_URL}/api/reports/${cleanTicketId}/download/${reportType}`;
+    const proxyUrl = `${activeApiUrl.value}/api/reports/${cleanTicketId}/download/${reportType}`;
     
     console.log(`Downloading report via proxy: ${proxyUrl}`);
     
@@ -579,7 +731,7 @@ async function downloadReportToClient(ticketId, reportType, hasItems) {
     const cleanTicketId = ticketId.trim();
     
     // ใช้ proxy endpoint แทนการเรียก URL โดยตรง
-    const proxyUrl = `${API_BASE_URL}/api/reports/${cleanTicketId}/download/${reportType}`;
+    const proxyUrl = `${activeApiUrl.value}/api/reports/${cleanTicketId}/download/${reportType}`;
     
     console.log(`Downloading report via proxy: ${proxyUrl}`);
     
@@ -629,35 +781,54 @@ async function downloadReportToClient(ticketId, reportType, hasItems) {
   }
 }
 async function handleTicketUpdate(eventData) {
+  console.log('🔧 handleTicketUpdate called with eventData:', eventData);
+  
   // ดึงค่ามาจาก eventData ที่ส่งมาใหม่
   const updatePayload = eventData.payload;
   const ticketId = eventData.ticketId;
 
+  console.log('🔧 updatePayload:', updatePayload);
+  console.log('🔧 ticketId:', ticketId);
+  console.log('🔧 updatePayload.mainData:', updatePayload.mainData);
+
   // --- จุดตรวจสอบใหม่ ---
   if (!ticketId) {
-    console.error("Update failed: No ticketId was provided.");
+    console.error("🔧 Update failed: No ticketId was provided.");
     alert("เกิดข้อผิดพลาด: ไม่พบ ID ของบัตรชั่ง");
     return;
   }
   
-  console.log(`--- [App.vue] Starting update for ticket ID: ${ticketId} ---`);
+  console.log(`🔧 Starting update for ticket ID: ${ticketId}`);
+  console.log(`🔧 activeApiUrl.value: ${activeApiUrl.value}`);
   
   isUpdatingTicket.value = true;
   let hasError = false;
 
   try {
     // --- ส่วนที่ 1: อัปเดตข้อมูลหลัก (ใช้ ticketId ที่รับมา) ---
-    console.log("Sending main data update (PATCH):", updatePayload.mainData);
-    const mainResponse = await fetch(`${activeApiUrl.value}/api/tickets/${ticketId}`, { // <-- ใช้ ticketId
+    console.log("🔧 Sending main data update (PATCH):", updatePayload.mainData);
+    console.log("🔧 Specifically checking WE_TRUCK_CHAR:", updatePayload.mainData.WE_TRUCK_CHAR);
+    const mainUrl = `${activeApiUrl.value}/api/tickets/${ticketId}`;
+    console.log("🔧 Main update URL:", mainUrl);
+    
+    const mainResponse = await fetch(mainUrl, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updatePayload.mainData),
     });
 
+    console.log("🔧 Main response status:", mainResponse.status);
+
     if (!mainResponse.ok) {
       hasError = true;
-      console.error('Failed to update main ticket data:', await mainResponse.text());
-      alert('เกิดข้อผิดพลาดในการอัปเดตข้อมูลหลัก');
+      const errorText = await mainResponse.text();
+      console.error('🔧 Failed to update main ticket data:', errorText);
+      alert(`เกิดข้อผิดพลาดในการอัปเดตข้อมูลหลัก: ${mainResponse.status} - ${errorText}`);
+    } else {
+      console.log("🔧 Main data update successful");
+      const responseData = await mainResponse.json();
+      console.log("🔧 Response data:", responseData);
+      console.log("🔧 Updated WE_TRUCK_CHAR in response:", responseData.WE_TRUCK_CHAR);
     }
 
     // --- ส่วนที่ 2: ถ้าไม่มี Error และมีรายการใหม่ให้แทนที่ ให้เรียก API "แทนที่" ---
@@ -678,20 +849,27 @@ async function handleTicketUpdate(eventData) {
     
     // --- ถ้าทุกอย่างสำเร็จ ---
     if (!hasError) {
+      console.log("🔧 All updates successful!");
       alert('แก้ไขข้อมูลสำเร็จ!');
+      console.log("🔧 About to call refreshTicketData...");
       await refreshTicketData(ticketId); // รีเฟรชข้อมูลทั้งหมด
+      console.log("🔧 refreshTicketData completed");
+    } else {
+      console.log("🔧 Update failed due to errors");
     }
     
   } catch (error) {
-    console.error('Error during ticket update process:', error);
-    alert('เกิดข้อผิดพลาดร้ายแรงในการแก้ไขข้อมูล');
+    console.error('🔧 Error during ticket update process:', error);
+    alert(`เกิดข้อผิดพลาดร้ายแรงในการแก้ไขข้อมูล: ${error.message}`);
   } finally {
     isUpdatingTicket.value = false;
+    console.log("🔧 handleTicketUpdate completed");
   }
 }
 async function refreshTicketData(ticketId) {
-  closeModal(); 
-  await new Promise(resolve => setTimeout(resolve, 100));
+  console.log("🔄 refreshTicketData called for ticketId:", ticketId);
+  
+  // อัปเดตข้อมูลรายการก่อน
   await Promise.all([
       fetchOpenTickets(selectedDate.value),
       fetchCompletedTickets(selectedDate.value)
@@ -700,16 +878,30 @@ async function refreshTicketData(ticketId) {
   // อัปเดตข้อมูลรายละเอียดของบัตรชั่งที่เลือก
   if (selectedTicketId.value === ticketId) {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/tickets/${ticketId}`);
+      const response = await fetch(`${activeApiUrl.value}/api/tickets/${ticketId}`);
       if (response.ok) {
         selectedTicketDetail.value = await response.json();
+        console.log("🔄 Updated selectedTicketDetail:", selectedTicketDetail.value);
       }
     } catch (error) {
       console.error('Failed to refresh ticket detail:', error);
     }
   }
   
-  await showTicketDetails(ticketId);
+  // อัปเดตข้อมูลใน modal โดยไม่ปิด modal
+  try {
+    const response = await fetch(`${activeApiUrl.value}/api/tickets/${ticketId}`);
+    if (response.ok) {
+      const updatedTicket = await response.json();
+      console.log("🔄 Before updating detailTicket:", detailTicket.value);
+      console.log("🔄 New ticket data from API:", updatedTicket);
+      detailTicket.value = updatedTicket;
+      console.log("🔄 After updating detailTicket:", detailTicket.value);
+      console.log("🔄 Updated WE_TRUCK_CHAR:", detailTicket.value.WE_TRUCK_CHAR);
+    }
+  } catch (error) {
+    console.error('Failed to refresh modal ticket data:', error);
+  }
 }
 
 // --- Watcher & Lifecycle Hook ---
@@ -1192,7 +1384,7 @@ async function printViaClient(ticketId, reportType, hasItems) {
     console.log('Attempting print via client...');
     
     // ดาวน์โหลดไฟล์ผ่าน proxy
-    const proxyUrl = `${API_BASE_URL}/api/reports/${ticketId}/download/${reportType}`;
+    const proxyUrl = `${activeApiUrl.value}/api/reports/${ticketId}/download/${reportType}`;
     console.log(`Downloading from: ${proxyUrl}`);
     
     const response = await fetch(proxyUrl);
@@ -1260,7 +1452,7 @@ async function printViaBackend(ticketId, reportType, hasItems) {
   try {
     console.log('Attempting print via backend...');
     
-    const response = await fetch(`${API_BASE_URL}/api/print/${ticketId}/${reportType}`, {
+    const response = await fetch(`${activeApiUrl.value}/api/print/${ticketId}/${reportType}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -1326,10 +1518,6 @@ async function printViaBackend(ticketId, reportType, hasItems) {
           </div>
 
           <div v-if="selectedTicketObject" class="action-buttons-grid">
-             <button class="action-btn detail-btn" @click="openDetailModal(selectedTicketObject)">
-              <span class="button-icon">🔍</span>
-              ดู/แก้ไข
-            </button>
             <button 
               class="action-btn cancel-btn"
               @click="cancelTicket(selectedTicketId)"
@@ -1396,6 +1584,11 @@ async function printViaBackend(ticketId, reportType, hasItems) {
             เสร็จสิ้นแล้ว ({{ completedTickets.length }})
           </button>
         </div>
+        
+        <div class="table-instruction">
+          <span class="instruction-icon">💡</span>
+          คลิกที่แถวเพื่อเลือกบัตรชั่ง หรือคลิกไอคอน 🔍 เพื่อดู/แก้ไขรายละเอียด
+        </div>
 
         <div v-if="apiError" class="error-message">
           <span class="error-icon">🚨</span>
@@ -1407,6 +1600,7 @@ async function printViaBackend(ticketId, reportType, hasItems) {
             <table>
               <thead>
                 <tr>
+                  <th style="width: 50px;">ดู/แก้ไข</th>
                   <th>เลขที่บัตร</th>
                   <th>ทะเบียนรถ</th>
                   <th>ประเภทรายงาน</th>
@@ -1422,6 +1616,15 @@ async function printViaBackend(ticketId, reportType, hasItems) {
                   :class="{ 'clickable-row': true, 'active-row': selectedTicketId === ticket.WE_ID }"
                   :data-ticket-id="ticket.WE_ID"
                 >
+                  <td class="view-cell">
+                    <button 
+                      class="view-btn" 
+                      @click.stop="showTicketDetails(ticket.WE_ID)"
+                      title="ดู/แก้ไขรายละเอียด"
+                    >
+                      🔍
+                    </button>
+                  </td>
                   <td>{{ ticket.WE_ID }}</td>
                   <td>{{ ticket.WE_LICENSE }}</td>
                   <td>{{ getReportTypeText(ticket) }}</td>
@@ -1429,7 +1632,7 @@ async function printViaBackend(ticketId, reportType, hasItems) {
                   <td>{{ ticket.WE_WEIGHTIN.toLocaleString() }}</td>
                 </tr>
                 <tr v-if="!apiError && openTickets.length === 0">
-                  <td colspan="5" class="empty-state">
+                  <td colspan="6" class="empty-state">
                     <span class="empty-icon">📭</span>
                     ไม่พบรายการ
                   </td>
@@ -1442,6 +1645,7 @@ async function printViaBackend(ticketId, reportType, hasItems) {
             <table>
               <thead>
                 <tr>
+                  <th style="width: 50px;">ดู/แก้ไข</th>
                   <th>เลขที่บัตร</th>
                   <th>ทะเบียนรถ</th>
                   <th>ประเภทรายงาน</th>
@@ -1457,6 +1661,15 @@ async function printViaBackend(ticketId, reportType, hasItems) {
                   :class="{ 'clickable-row': true, 'active-row': selectedTicketId === ticket.WE_ID }"
                   :data-ticket-id="ticket.WE_ID"
                 >
+                  <td class="view-cell">
+                    <button 
+                      class="view-btn" 
+                      @click.stop="showTicketDetails(ticket.WE_ID)"
+                      title="ดู/แก้ไขรายละเอียด"
+                    >
+                      🔍
+                    </button>
+                  </td>
                   <td>{{ ticket.WE_ID }}</td>
                   <td>{{ ticket.WE_LICENSE }}</td>
                   <td>{{ getReportTypeText(ticket) }}</td>
@@ -1464,7 +1677,7 @@ async function printViaBackend(ticketId, reportType, hasItems) {
                   <td>{{ ticket.WE_WEIGHTNET?.toLocaleString() || 'N/A' }}</td>
                 </tr>
                 <tr v-if="!apiError && completedTickets.length === 0">
-                  <td colspan="5" class="empty-state">
+                  <td colspan="6" class="empty-state">
                     <span class="empty-icon">📭</span>
                     ไม่พบรายการ
                   </td>
@@ -1478,9 +1691,9 @@ async function printViaBackend(ticketId, reportType, hasItems) {
     
     <TicketDetailModal 
       :ticket="detailTicket" 
-      :isVisible="isModalVisible" 
+      :visible="isModalVisible" 
       @close="closeDetailModal"
-      @update-ticket="handleUpdateTicket" 
+      @ticket-updated="handleUpdateTicket" 
     />
      <CreateTicketModal
       :isVisible="isCreateModalVisible"
@@ -1648,7 +1861,7 @@ main {
 }
 .ticket-id-display { font-weight: 600; font-size: 1.1rem; color: var(--primary-color); }
 .no-ticket-selected { font-style: italic; color: var(--secondary-color); }
-.action-buttons-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+.action-buttons-grid { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
 
 .action-btn {
   width: 100%;
@@ -1661,8 +1874,7 @@ main {
   color: white;
 }
 .action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.detail-btn { background-color: var(--info-color); }
-.cancel-btn { background-color: var(--secondary-color); }
+.cancel-btn { background-color: var(--secondary-color); grid-column: 1 / -1; }
 .weigh-out-btn { background-color: var(--success-color); grid-column: 1 / -1; }
 .continuous-btn { background-color: #7c3aed; grid-column: 1 / -1; }
 .print-report-section {
@@ -1704,6 +1916,22 @@ main {
   font-weight: 600;
   color: var(--primary-color);
 }
+.table-instruction {
+  background-color: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  color: var(--info-color);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+.instruction-icon {
+  font-size: 1rem;
+}
 .table-container { flex-grow: 1; overflow-y: auto; min-height: 0; }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 0.75rem; border-bottom: 1px solid var(--border-color); text-align: left; white-space: nowrap; }
@@ -1712,6 +1940,33 @@ th { background-color: #f8fafc; position: sticky; top: 0; }
 .clickable-row:hover { background-color: #f8fafc; }
 .active-row { background: var(--highlight-color) !important; font-weight: 600; }
 .empty-state { text-align: center; padding: 2rem; color: var(--secondary-color); }
+
+.view-cell {
+  text-align: center;
+  padding: 0.5rem;
+}
+.view-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.2rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+}
+.view-btn:hover {
+  background-color: var(--primary-color);
+  color: white;
+  transform: scale(1.1);
+}
+.view-btn:active {
+  transform: scale(0.95);
+}
 
 .offline-sync-button {
   position: fixed;

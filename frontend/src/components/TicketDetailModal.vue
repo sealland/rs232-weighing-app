@@ -38,6 +38,34 @@ watch(() => props.visible, (isVisible) => {
   }
 });
 
+// เพิ่ม watcher สำหรับอัปเดตข้อมูลเมื่อ ticket เปลี่ยน
+watch(() => props.ticket, (newTicket, oldTicket) => {
+  console.log("🔄 Ticket watcher triggered");
+  console.log("🔄 Old ticket:", oldTicket);
+  console.log("🔄 New ticket:", newTicket);
+  console.log("🔄 isEditing.value:", isEditing.value);
+  
+  if (newTicket) {
+    console.log("🔄 Ticket data updated in modal:", newTicket);
+    console.log("🔄 New WE_TRUCK_CHAR:", newTicket.WE_TRUCK_CHAR);
+    
+    // อัปเดต editableData ถ้ากำลังอยู่ในโหมดแก้ไข
+    if (isEditing.value) {
+      console.log("🔄 Updating editableData because isEditing is true");
+      editableData.value = {
+        WE_LICENSE: newTicket.WE_LICENSE,
+        WE_VENDOR: newTicket.WE_VENDOR,
+        WE_QTY: newTicket.WE_QTY,
+        WE_DRIVER: newTicket.WE_DRIVER,
+        WE_TRUCK_CHAR: newTicket.WE_TRUCK_CHAR,
+      };
+      console.log("🔄 Updated editableData:", editableData.value);
+    } else {
+      console.log("🔄 Not updating editableData because isEditing is false");
+    }
+  }
+}, { deep: true });
+
 // --- Functions ---
 // --- เพิ่มฟังก์ชันใหม่ ---
 function toggleSelectAllResults(event) {
@@ -62,6 +90,9 @@ function startEditing() {
   // 1. ตรวจสอบก่อนว่ามี ticket data จริงๆ
   if (!props.ticket) return;
 
+  console.log('🔧 startEditing called with ticket:', props.ticket);
+  console.log('🔧 Original WE_TRUCK_CHAR:', props.ticket.WE_TRUCK_CHAR);
+
   // 2. Copy ข้อมูลหลัก - เพิ่มข้อมูลคนขับและประเภทรถ
   editableData.value = {
     WE_LICENSE: props.ticket.WE_LICENSE,
@@ -71,6 +102,8 @@ function startEditing() {
     WE_DRIVER: props.ticket.WE_DRIVER,
     WE_TRUCK_CHAR: props.ticket.WE_TRUCK_CHAR,
   };
+  
+  console.log('🔧 editableData.value after setting:', editableData.value);
   
   // --- ตั้งค่าน้ำหนักก่อนหักและน้ำหนักที่หัก ---
   editableWeightBeforeDeduction.value = props.ticket.WE_WEIGHTTOT || 0;
@@ -163,19 +196,25 @@ function handleSaveChanges() {
 
   const objectToEmit = { 
     payload: finalPayload, 
-    ticketId: props.ticket.WE_ID // <-- เราต้องการค่านี้
+    ticketId: props.ticket.WE_ID.trim() // <-- ลบช่องว่างท้าย
   };
  // ========================== DEBUG HERE ==========================
  console.log('--- [Modal] ตรวจสอบข้อมูลก่อน Emit ---');
   console.log('1. Checking props.ticket:', JSON.parse(JSON.stringify(props.ticket)));
   console.log('2. Checking props.ticket.WE_ID:', props.ticket.WE_ID);
-  console.log('3. Final object to emit:', JSON.parse(JSON.stringify(objectToEmit)));
+  console.log('3. Checking editableData.value:', JSON.parse(JSON.stringify(editableData.value)));
+  console.log('4. Checking mainDataPayload:', JSON.parse(JSON.stringify(mainDataPayload)));
+  console.log('5. Final object to emit:', JSON.parse(JSON.stringify(objectToEmit)));
   // ================================================================
 
   // ส่ง object ที่เตรียมไว้
+  console.log("🔧 About to emit ticket-updated event with:", objectToEmit);
   emit('ticket-updated', objectToEmit);
+  console.log("🔧 Event emitted successfully");
   
+  console.log("🔧 Setting isEditing to false");
   isEditing.value = false;
+  console.log("🔧 isEditing.value after setting to false:", isEditing.value);
 }
 
 async function handleAddSelectedItems() {

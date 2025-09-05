@@ -16,10 +16,7 @@ import sys
 from PIL import Image, ImageTk
 import pystray
 from pystray import MenuItem as item
-import sqlite3  # เพิ่ม import สำหรับ SQLite
-import csv  # เพิ่ม import สำหรับ CSV export
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import uuid  # เพิ่ม uuid สำหรับสร้าง ID ชั่วคราว
+# ลบ import ที่เกี่ยวข้องกับ Offline Mode ออกแล้ว
 
 # Configuration
 CLIENT_CONFIG_FILE = "client_config.ini"
@@ -154,12 +151,6 @@ class RS232ClientGUI:
         # Sensitivity variable
         self.sensitivity = DEFAULT_SENSITIVITY
         
-        # เพิ่ม Local Data Manager
-        self.local_data_manager = LocalDataManager()
-        
-        # เพิ่ม offline mode flag
-        self.is_offline_mode = False
-        
         # GUI variables
         self.port_var = tk.StringVar(value=self.serial_config['port'])
         self.baudrate_var = tk.StringVar(value=str(self.serial_config['baudrate']))
@@ -177,22 +168,9 @@ class RS232ClientGUI:
         self.custom_pattern_regex_var = tk.StringVar(value=r"CUSTOM3\s+(\d+)")
         self.custom_pattern_is_zero_var = tk.BooleanVar(value=False)
         
-        # เพิ่ม Local Web Server
-        self.local_web_server = LocalWebServer(self)
-
-        # เพิ่ม Local API Server
-        self.local_api_server = LocalAPIServer(self.local_data_manager)
-        
-        
         # สร้าง UI ก่อน
         self.setup_ui()
         self.update_available_ports()
-        
-        # เพิ่ม Offline Mode UI เข้าไปใน right_panel ที่สร้างใน setup_ui
-        self.offline_ui = OfflineModeUI(self, self.right_panel)
-        
-        # เพิ่ม Connection Monitor
-        self.connection_monitor = ConnectionMonitor(self)
         
         # โหลดค่า sensitivity จาก config
         self.sensitivity = self.serial_config.get('sensitivity', DEFAULT_SENSITIVITY)
@@ -241,10 +219,10 @@ class RS232ClientGUI:
         self.port_combo = ttk.Combobox(port_frame, textvariable=self.port_var, width=12, font=('Tahoma', 8))
         self.port_combo.grid(row=0, column=0, padx=(0, 5))
         
-        refresh_btn = ttk.Button(port_frame, text="��", width=3, command=self.update_available_ports)
+        refresh_btn = ttk.Button(port_frame, text="🔄", width=3, command=self.update_available_ports)
         refresh_btn.grid(row=0, column=1, padx=(0, 5))
         
-        check_btn = ttk.Button(port_frame, text="��", width=3, command=self.check_ports)
+        check_btn = ttk.Button(port_frame, text="🔍", width=3, command=self.check_ports)
         check_btn.grid(row=0, column=2)
         
         # Baud rate
@@ -407,20 +385,15 @@ class RS232ClientGUI:
                                             font=('Tahoma', 9, 'bold'))
         self.serial_status_label.grid(row=0, column=0, sticky=tk.W)
         
-        # Server status
+        # Server status - แสดงสีแดงเมื่อ Disconnected
         self.server_status_label = ttk.Label(status_indicators_frame, text="🔴 Server: Disconnected", 
-                                            font=('Tahoma', 9, 'bold'))
+                                            font=('Tahoma', 9, 'bold'), foreground='red')
         self.server_status_label.grid(row=0, column=1, sticky=tk.W)
         
         # Current weight
         self.weight_label = ttk.Label(status_indicators_frame, text="⚖️ Weight: 0 kg", 
                                     font=('Tahoma', 11, 'bold'))
         self.weight_label.grid(row=0, column=2, sticky=tk.E)
-        
-        # Offline Mode Toggle Button
-        self.offline_mode_btn = ttk.Button(status_indicators_frame, text="🟢 Online Mode", 
-                                          command=self.toggle_offline_mode, width=12)
-        self.offline_mode_btn.grid(row=1, column=0, columnspan=3, pady=(5, 0))
         
         # Log area
         log_frame = ttk.Frame(status_frame)
@@ -522,16 +495,20 @@ class RS232ClientGUI:
         # App & Help Buttons Frame
         app_help_frame = ttk.LabelFrame(right_panel, text="Application", padding="8")
         app_help_frame.grid(row=2, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 8), padx=(4, 0))
-        app_help_frame.columnconfigure((0, 1, 2), weight=1)
+        app_help_frame.columnconfigure((0, 1, 2, 3), weight=1)
 
         self.frontend_btn = ttk.Button(app_help_frame, text="🌐 Frontend", command=self.open_frontend, style='Accent.TButton')
         self.frontend_btn.grid(row=0, column=0, padx=2, sticky=tk.EW)
         
+        # เพิ่มปุ่ม Offline Scale
+        self.offline_scale_btn = ttk.Button(app_help_frame, text="⚖️ Offline Scale", command=self.open_offline_scale)
+        self.offline_scale_btn.grid(row=0, column=1, padx=2, sticky=tk.EW)
+        
         self.tray_btn = ttk.Button(app_help_frame, text="📌 Tray", command=self.minimize_to_tray)
-        self.tray_btn.grid(row=0, column=1, padx=2, sticky=tk.EW)
+        self.tray_btn.grid(row=0, column=2, padx=2, sticky=tk.EW)
         
         help_btn = ttk.Button(app_help_frame, text="❓ Help", command=self.show_main_help)
-        help_btn.grid(row=0, column=2, padx=2, sticky=tk.EW)
+        help_btn.grid(row=0, column=3, padx=2, sticky=tk.EW)
         
         # Debugging Buttons Frame
         debug_frame = ttk.LabelFrame(right_panel, text="Debugging Tools", padding="8")
@@ -549,6 +526,28 @@ class RS232ClientGUI:
         right_panel.columnconfigure(1, weight=1)
         self.update_branch_prefix_display()
         self.update_scale_pattern_info()
+
+    def open_offline_scale(self):
+        """เปิดไฟล์ offline_weighing.html สำหรับใช้งานตาชั่งผ่านระบบ Offline"""
+        try:
+            # หาไฟล์ offline_weighing.html ในโฟลเดอร์ปัจจุบัน
+            offline_file = "offline_weighing.html"
+            if os.path.exists(offline_file):
+                # เปิดไฟล์ในเบราว์เซอร์
+                file_path = os.path.abspath(offline_file)
+                file_url = f"file:///{file_path.replace(os.sep, '/')}"
+                webbrowser.open(file_url)
+                self.log_message(f"Opened offline scale file: {file_path}")
+                messagebox.showinfo("Offline Scale", f"Opening offline scale file:\n{file_path}")
+            else:
+                # ถ้าไม่พบไฟล์ ให้แจ้งเตือน
+                self.log_message("Offline scale file not found: offline_weighing.html")
+                messagebox.showwarning("File Not Found", 
+                                     "Offline scale file 'offline_weighing.html' not found!\n\n"
+                                     "Please ensure the file exists in the same directory as this application.")
+        except Exception as e:
+            self.log_message(f"Error opening offline scale file: {e}")
+            messagebox.showerror("Error", f"Failed to open offline scale file: {e}")
 
     def show_help(self):
         """แสดงหน้าต่าง Help"""
@@ -732,26 +731,7 @@ class RS232ClientGUI:
         # ซ่อนการแสดงรายละเอียด patterns
         self.scale_pattern_info_label.config(text="")
         
-    def toggle_offline_mode(self):
-        """เปลี่ยนระหว่าง Online และ Offline Mode"""
-        try:
-            self.is_offline_mode = not self.is_offline_mode
-            
-            if self.is_offline_mode:
-                self.offline_mode_btn.config(text="🔴 Offline Mode")
-                self.log_message("Switched to Offline Mode - Data will be stored locally")
-                # อัปเดต UI ของ Offline Mode
-                if hasattr(self, 'offline_ui'):
-                    self.offline_ui.update_connection_status(False)
-            else:
-                self.offline_mode_btn.config(text="🟢 Online Mode")
-                self.log_message("Switched to Online Mode - Data will be sent to server directly")
-                # อัปเดต UI ของ Offline Mode
-                if hasattr(self, 'offline_ui'):
-                    self.offline_ui.update_connection_status(True)
-                    
-        except Exception as e:
-            self.log_message(f"Error in toggle_offline_mode: {e}")
+    # toggle_offline_mode function ถูกลบออกแล้ว - ใช้งาน Online Mode เท่านั้น
         
     def get_branch_prefix(self, branch_name):
         """ดึง Prefix ของสาขา"""
@@ -1621,14 +1601,12 @@ class RS232ClientGUI:
                 if non_zero_values:
                     weight_result = non_zero_values[-1]
                     self.log_message(f"Parsed weight from complete pattern: {cleaned_text} -> {weight_result}")
-                    # บันทึกใน Local Database
-                    self.save_weight_locally(weight_result)
+                    # ลบการบันทึกใน Local Database
                     return weight_result
                 elif "0" in extracted_weight_values or "0.0" in extracted_weight_values:
                     weight_result = "0"
                     self.log_message(f"Parsed zero weight from complete pattern: {cleaned_text} -> {weight_result}")
-                    # บันทึกใน Local Database
-                    self.save_weight_locally(weight_result)
+                    # ลบการบันทึกใน Local Database
                     return weight_result
             
             # เพิ่มการตรวจสอบข้อมูลที่อาจถูกตัดขาด
@@ -1657,7 +1635,7 @@ class RS232ClientGUI:
                             if is_zero_indicator:
                                 weight_result = "0"
                                 self.log_message(f"Found incomplete zero weight pattern: {cleaned_text}")
-                                self.save_weight_locally(weight_result)
+                                # ลบการบันทึกใน Local Database
                                 return weight_result
                             else:
                                 try:
@@ -1674,7 +1652,7 @@ class RS232ClientGUI:
                                     
                                     weight_result = str(weight_val)
                                     self.log_message(f"Found incomplete weight pattern: {cleaned_text} -> {weight_result}")
-                                    self.save_weight_locally(weight_result)
+                                    # ลบการบันทึกใน Local Database
                                     return weight_result
                                 except ValueError:
                                     pass
@@ -1684,102 +1662,9 @@ class RS232ClientGUI:
             self.log_message(f"Parse error: {e}")
             return "N/A"
 
-    def save_weight_locally(self, weight):
-        """บันทึกน้ำหนักใน Local Database"""
-        try:
-            record_id = self.local_data_manager.save_weight_locally(
-                weight, 
-                "local",
-                self.branch_var.get(),
-                self.scale_pattern_var.get()
-            )
-            if record_id:
-                # อัปเดต Local UI
-                self.offline_ui.update_local_data_display()
-        except Exception as e:
-            self.log_message(f"Error saving weight locally: {e}")
+    # ลบ save_weight_locally และ send_offline_data_to_server functions
 
-    def send_offline_data_to_server(self, record):
-        """ส่งข้อมูลจาก Local ไป Server"""
-        try:
-            if self.websocket and not self.websocket.closed:
-                message = {
-                    "client_id": self.client_id_var.get(),
-                    "weight": str(record[1]),  # weight
-                    "timestamp": time.time(),
-                    "branch": record[4] if record[4] else self.branch_var.get(),
-                    "branch_prefix": self.get_branch_prefix(record[4] if record[4] else self.branch_var.get()),
-                    "scale_pattern": record[5] if record[5] else self.scale_pattern_var.get(),
-                    "offline_sync": True  # แสดงว่าเป็นข้อมูลจาก offline sync
-                }
-                
-                # ส่งข้อมูลแบบ async
-                asyncio.run_coroutine_threadsafe(
-                    self.websocket.send(json.dumps(message)), 
-                    self.loop
-                )
-                
-                # ทำเครื่องหมายว่า sync แล้ว
-                self.local_data_manager.mark_as_synced(record[0])
-                
-                # อัปเดต Local UI
-                self.offline_ui.update_local_data_display()
-                
-                self.log_message(f"Synced offline data: {record[1]} kg")
-                
-        except Exception as e:
-            self.log_message(f"Error syncing offline data: {e}")
-
-    def show_local_data_window(self):
-        """แสดงหน้าต่างข้อมูล Local"""
-        try:
-            # สร้างหน้าต่างใหม่
-            local_window = tk.Toplevel(self.root)
-            local_window.title("Local Weight Data")
-            local_window.geometry("800x500")
-            
-            # สร้าง Treeview สำหรับแสดงข้อมูล
-            columns = ('ID', 'Weight', 'Timestamp', 'Status', 'Branch', 'Scale Pattern', 'Synced')
-            tree = ttk.Treeview(local_window, columns=columns, show='headings')
-            
-            # กำหนดหัวข้อคอลัมน์
-            for col in columns:
-                tree.heading(col, text=col)
-                tree.column(col, width=100)
-            
-            # ดึงข้อมูลจาก Local Database
-            conn = sqlite3.connect(self.local_data_manager.db_path)
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT id, weight, timestamp, status, branch, scale_pattern, synced
-                FROM weight_records
-                ORDER BY timestamp DESC
-                LIMIT 100
-            ''')
-            
-            data = cursor.fetchall()
-            conn.close()
-            
-            # เพิ่มข้อมูลใน Treeview
-            for row in data:
-                synced_text = "Yes" if row[6] else "No"
-                tree.insert('', 'end', values=(row[0], row[1], row[2], row[3], row[4], row[5], synced_text))
-            
-            # เพิ่ม Scrollbar
-            scrollbar = ttk.Scrollbar(local_window, orient="vertical", command=tree.yview)
-            tree.configure(yscrollcommand=scrollbar.set)
-            
-            # จัดวาง
-            tree.pack(side="left", fill="both", expand=True)
-            scrollbar.pack(side="right", fill="y")
-            
-            # แสดงจำนวนข้อมูล
-            info_label = ttk.Label(local_window, text=f"Showing {len(data)} records")
-            info_label.pack(pady=5)
-            
-        except Exception as e:
-            self.log_message(f"Error showing local data window: {e}")
-            messagebox.showerror("Error", f"Error showing local data: {e}")
+    # ลบ show_local_data_window function
 
     def read_weight_from_rs232(self):
         """อ่านน้ำหนักจาก RS232"""
@@ -2024,11 +1909,7 @@ class RS232ClientGUI:
             self.start_btn.config(state='disabled')
             self.stop_btn.config(state='normal')
             
-            # เริ่ม Local Web Server
-            self.local_web_server.start_server()
-            
-            # เริ่ม Local API Server
-            self.local_api_server.start_server()
+            # ลบ Local Web Server และ Local API Server
             
             # เริ่มเชื่อมต่อ WebSocket ไปยัง server ที่กำหนด
             try:
@@ -2106,11 +1987,7 @@ class RS232ClientGUI:
             self.is_running = False
             self.is_connected = False
             
-            # หยุด Local Web Server
-            self.local_web_server.stop_server()
-            
-            # หยุด Local API Server
-            self.local_api_server.stop_server()
+            # ลบ Local Web Server และ Local API Server
             
             # หยุด real-time monitoring
             if self.realtime_monitoring_active:
@@ -2139,7 +2016,7 @@ class RS232ClientGUI:
             self.start_btn.config(state='normal')
             self.stop_btn.config(state='disabled')
             self.serial_status_label.config(text="🔴 Serial: Disconnected")
-            self.server_status_label.config(text="🔴 Server: Disconnected")
+            self.server_status_label.config(text="🔴 Server: Disconnected", foreground='red')
             
             # ล้าง buffer
             self.read_buffer = b''
@@ -2243,7 +2120,7 @@ class RS232ClientGUI:
                 websocket = await websockets.connect(server_url)
                 self.websocket = websocket
                 self.is_connected = True
-                self.server_status_label.config(text="🟢 Server: Connected")
+                self.server_status_label.config(text="🟢 Server: Connected", foreground='green')
                 self.log_message("Connected to server")
                 
                 # รีเซ็ต reconnect delay เมื่อเชื่อมต่อสำเร็จ
@@ -2273,19 +2150,19 @@ class RS232ClientGUI:
                     
                     self.websocket = None
                     self.is_connected = False
-                    self.server_status_label.config(text="🔴 Server: Disconnected")
+                    self.server_status_label.config(text="🔴 Server: Disconnected", foreground='red')
                     
             except websockets.exceptions.InvalidURI:
                 self.log_message(f"Invalid server URL: {server_url}")
                 self.is_connected = False
-                self.server_status_label.config(text="🔴 Server: Invalid URL")
+                self.server_status_label.config(text="🔴 Server: Invalid URL", foreground='red')
                 await asyncio.sleep(10)  # รอนานขึ้นสำหรับ URL ที่ผิด
                 continue
                     
             except Exception as e:
                 self.log_message(f"Connection error: {e}")
                 self.is_connected = False
-                self.server_status_label.config(text="🔴 Server: Disconnected")
+                self.server_status_label.config(text="🔴 Server: Disconnected", foreground='red')
             
             # รอก่อน reconnect
             if self.is_running:
@@ -2333,45 +2210,28 @@ class RS232ClientGUI:
                     "scale_pattern": self.scale_pattern_var.get()
                 }
                 
-                # แยกการทำงานระหว่าง Online และ Offline Mode
-                if self.is_offline_mode:
-                    # Offline Mode: บันทึกข้อมูลใน Local Database
-                    try:
-                        if hasattr(self, 'local_data_manager'):
-                            self.local_data_manager.add_weight_record(
-                                weight=weight,
-                                branch=self.branch_var.get(),
-                                branch_prefix=self.get_branch_prefix(self.branch_var.get()),
-                                scale_pattern=self.scale_pattern_var.get()
-                            )
-                            self.log_message(f"Offline Mode: Stored weight {weight} locally")
-                        else:
-                            self.log_message("Offline Mode: Local data manager not available")
-                    except Exception as local_error:
-                        self.log_message(f"Error storing data locally: {local_error}")
-                else:
-                    # Online Mode: ส่งข้อมูลไปยัง Server โดยตรง
-                    try:
-                        # ตรวจสอบ WebSocket state ก่อนส่ง
-                        if self.websocket and not self.websocket.closed:
-                            await self.websocket.send(json.dumps(message))
-                            self.log_message(f"Online Mode: Sent weight {weight} to server (Branch: {self.branch_var.get()}, Pattern: {self.scale_pattern_var.get()})")
-                        else:
-                            self.log_message("WebSocket not available for sending")
-                            break
-                            
-                    except websockets.exceptions.ConnectionClosed:
-                        self.log_message("WebSocket connection closed during send")
+                # ส่งข้อมูลไปยัง Server โดยตรง
+                try:
+                    # ตรวจสอบ WebSocket state ก่อนส่ง
+                    if self.websocket and not self.websocket.closed:
+                        await self.websocket.send(json.dumps(message))
+                        self.log_message(f"Sent weight {weight} to server (Branch: {self.branch_var.get()}, Pattern: {self.scale_pattern_var.get()})")
+                    else:
+                        self.log_message("WebSocket not available for sending")
                         break
-                    except websockets.exceptions.ConnectionClosedOK:
-                        self.log_message("WebSocket connection closed normally during send")
+                        
+                except websockets.exceptions.ConnectionClosed:
+                    self.log_message("WebSocket connection closed during send")
+                    break
+                except websockets.exceptions.ConnectionClosedOK:
+                    self.log_message("WebSocket connection closed normally during send")
+                    break
+                except Exception as send_error:
+                    self.log_message(f"Error sending to websocket: {send_error}")
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        self.log_message(f"Too many send errors ({consecutive_errors}), reconnecting...")
                         break
-                    except Exception as send_error:
-                        self.log_message(f"Error sending to websocket: {send_error}")
-                        consecutive_errors += 1
-                        if consecutive_errors >= max_consecutive_errors:
-                            self.log_message(f"Too many send errors ({consecutive_errors}), reconnecting...")
-                            break
                 
                 await asyncio.sleep(0.1)  # ลด delay จาก 0.5 เป็น 0.1 วินาที
                 
@@ -2517,18 +2377,10 @@ class RS232ClientGUI:
     def open_frontend(self):
         """เปิดหน้าเว็บ Frontend"""
         try:
-            # ตรวจสอบสถานะการเชื่อมต่อ
-            if self.is_offline_mode:
-                # เปิด Local Dashboard
-                local_url = f"http://localhost:{self.local_web_server.port}"
-                self.log_message(f"Opening local dashboard: {local_url}")
-                webbrowser.open(local_url)
-                messagebox.showinfo("Local Dashboard", f"Opening local dashboard:\n{local_url}\n\nThis shows data from local storage.")
-            else:
-                # เปิด Frontend ปกติ
-                self.log_message(f"Opening frontend: {FRONTEND_URL}")
-                webbrowser.open(FRONTEND_URL)
-                messagebox.showinfo("Frontend", f"Opening frontend in browser:\n{FRONTEND_URL}")
+            # เปิด Frontend ปกติ
+            self.log_message(f"Opening frontend: {FRONTEND_URL}")
+            webbrowser.open(FRONTEND_URL)
+            messagebox.showinfo("Frontend", f"Opening frontend in browser:\n{FRONTEND_URL}")
         except Exception as e:
             self.log_message(f"Error opening frontend: {e}")
             messagebox.showerror("Error", f"Failed to open frontend: {e}")
@@ -2759,567 +2611,7 @@ class RS232ClientGUI:
         y = (help_window.winfo_screenheight() // 2) - (help_window.winfo_height() // 2)
         help_window.geometry(f"+{x}+{y}")
 
-# เพิ่ม Connection Monitor Class
-class ConnectionMonitor:
-    def __init__(self, client):
-        self.client = client
-        self.is_online = False
-        self.monitor_thread = threading.Thread(target=self.monitor_connection)
-        self.monitor_thread.daemon = True
-        self.monitor_thread.start()
-    
-    def monitor_connection(self):
-        """ตรวจสอบการเชื่อมต่ออย่างต่อเนื่อง"""
-        while True:
-            try:
-                # ตรวจสอบ WebSocket connection
-                if (self.client.websocket and 
-                    not self.client.websocket.closed):
-                    self.is_online = True
-                    if hasattr(self.client, 'offline_ui'):
-                        self.client.offline_ui.update_connection_status(True)
-                else:
-                    self.is_online = False
-                    if hasattr(self.client, 'offline_ui'):
-                        self.client.offline_ui.update_connection_status(False)
-                
-                time.sleep(5)  # ตรวจสอบทุก 5 วินาที
-                
-            except Exception as e:
-                self.is_online = False
-                if hasattr(self.client, 'offline_ui'):
-                    self.client.offline_ui.update_connection_status(False)
-                time.sleep(5)
-
-# เพิ่ม Offline Mode UI Class
-class OfflineModeUI:
-    def __init__(self, client_gui, parent_frame):
-        self.client_gui = client_gui
-        self.parent_frame = parent_frame
-        self.setup_offline_ui()
-    
-    def setup_offline_ui(self):
-        """สร้าง UI สำหรับ Offline Mode ภายใน parent_frame"""
-        self.offline_frame = ttk.LabelFrame(self.parent_frame, text="🔄 Offline Mode")
-        # จัดวาง UI ของ Offline ต่อจาก Debugging Tools ที่ row 3, column 1
-        self.offline_frame.grid(row=3, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(4, 0), pady=(0, 8))
-        self.offline_frame.columnconfigure(0, weight=1)
-
-        # --- ADDING WIDGET CREATION BACK ---
-        # สถานะการเชื่อมต่อ
-        self.connection_status = ttk.Label(
-            self.offline_frame, 
-            text="🔴 Offline - Local Mode Active",
-            foreground="red",
-            font=("Arial", 9, "bold")
-        )
-        # แสดงข้อมูล Local
-        self.local_data_label = ttk.Label(
-            self.offline_frame,
-            text="Local Records: 0 | Synced: 0 | Unsynced: 0"
-        )
-        # Frame สำหรับปุ่มต่างๆ
-        button_frame = ttk.Frame(self.offline_frame)
-        
-        # ปุ่ม Sync ข้อมูล
-        self.sync_button = ttk.Button(
-            button_frame,
-            text="🔄 Sync",
-            command=self.sync_data,
-            style="Accent.TButton"
-        )
-        # ปุ่ม Export CSV
-        self.export_button = ttk.Button(
-            button_frame,
-            text="📊 Export",
-            command=self.export_data
-        )
-        # ปุ่ม View Local Data
-        self.view_button = ttk.Button(
-            button_frame,
-            text="👁️ View",
-            command=self.view_local_data
-        )
-        # --- END OF WIDGET CREATION ---
-
-        self.connection_status.grid(row=0, column=0, columnspan=3, pady=2)
-        self.local_data_label.grid(row=1, column=0, columnspan=3, pady=2)
-        button_frame.grid(row=2, column=0, columnspan=3, pady=2, sticky=tk.EW)
-        
-        self.sync_button.grid(row=0, column=0, padx=2, sticky=tk.EW)
-        self.export_button.grid(row=0, column=1, padx=2, sticky=tk.EW)
-        self.view_button.grid(row=0, column=2, padx=2, sticky=tk.EW)
-        
-        button_frame.columnconfigure(0, weight=1)
-        button_frame.columnconfigure(1, weight=1)
-        button_frame.columnconfigure(2, weight=1)
-
-    def update_connection_status(self, is_online):
-        """อัปเดตสถานะการเชื่อมต่อ"""
-        if is_online:
-            self.connection_status.config(
-                text="🟢 Online - Connected to Server",
-                foreground="green"
-            )
-        else:
-            self.connection_status.config(
-                text="🔴 Offline - Local Mode Active",
-                foreground="red"
-            )
-
-    def update_local_data_display(self):
-        """อัปเดตการแสดงข้อมูล Local"""
-        if hasattr(self.client_gui, 'local_data_manager'):
-            stats = self.client_gui.local_data_manager.get_local_stats()
-            self.local_data_label.config(
-                text=f"Local: {stats['total']} | Synced: {stats['synced']} | Unsynced: {stats['unsynced']}"
-            )
-    
-    def sync_data(self):
-        """Sync ข้อมูลจาก Local ไป Server"""
-        if hasattr(self.client_gui, 'local_data_manager'):
-            unsynced_data = self.client_gui.local_data_manager.get_unsynced_data()
-            if unsynced_data:
-                self.client_gui.log_message(f"Syncing {len(unsynced_data)} records...")
-                for record in unsynced_data:
-                    self.client_gui.send_offline_data_to_server(record)
-            else:
-                self.client_gui.log_message("No data to sync")
-    
-    def export_data(self):
-        """Export ข้อมูลเป็น CSV"""
-        if hasattr(self.client_gui, 'local_data_manager'):
-            filename = f"weight_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            count = self.client_gui.local_data_manager.export_to_csv(filename)
-            if count > 0:
-                self.client_gui.log_message(f"Exported {count} records to {filename}")
-    
-    def view_local_data(self):
-        """แสดงข้อมูล Local ในหน้าต่างใหม่"""
-        if hasattr(self.client_gui, 'local_data_manager'):
-            self.client_gui.local_data_manager.show_local_data_window()
-
-class LocalWebServer:
-    def __init__(self, client_gui):
-        self.client_gui = client_gui
-        self.server = None
-        self.server_thread = None
-        self.port = 8080
-        
-    def start_server(self):
-        """เริ่ม Local Web Server"""
-        try:
-            class LocalHandler(BaseHTTPRequestHandler):
-                def __init__(self, *args, **kwargs):
-                    self.client_gui = self.server.client_gui
-                    super().__init__(*args, **kwargs)
-                
-                def do_GET(self):
-                    """จัดการ GET requests"""
-                    if self.path == '/':
-                        self.send_response(200)
-                        self.send_header('Content-type', 'text/html')
-                        self.end_headers()
-                        
-                        # ส่งหน้า HTML ง่ายๆ
-                        html = self.get_local_dashboard()
-                        self.wfile.write(html.encode('utf-8'))
-                        
-                    elif self.path == '/api/weight':
-                        self.send_response(200)
-                        self.send_header('Content-type', 'application/json')
-                        self.send_header('Access-Control-Allow-Origin', '*')
-                        self.end_headers()
-                        
-                        # ส่งข้อมูลน้ำหนักปัจจุบัน
-                        weight_data = {
-                            'weight': self.client_gui.last_weight,
-                            'timestamp': time.time(),
-                            'status': 'local' if self.client_gui.is_offline_mode else 'online'
-                        }
-                        self.wfile.write(json.dumps(weight_data).encode('utf-8'))
-                        
-                    elif self.path == '/api/local-data':
-                        self.send_response(200)
-                        self.send_header('Content-type', 'application/json')
-                        self.send_header('Access-Control-Allow-Origin', '*')
-                        self.end_headers()
-                        
-                        # ส่งข้อมูลจาก Local Database
-                        if hasattr(self.client_gui, 'local_data_manager'):
-                            stats = self.client_gui.local_data_manager.get_local_stats()
-                            self.wfile.write(json.dumps(stats).encode('utf-8'))
-                        else:
-                            self.wfile.write(json.dumps({'error': 'No local data'}).encode('utf-8'))
-                    
-                    elif self.path == '/api/tickets/':
-                        tickets = self.data_manager.get_local_tickets(completed=False)
-                        self._send_response(200, tickets)
-                    elif self.path == '/api/tickets/completed':
-                        tickets = self.data_manager.get_local_tickets(completed=True)
-                        self._send_response(200, tickets)
-                    elif self.path == '/api/tickets/mark-synced':
-                        content_length = int(self.headers['Content-Length'])
-                        post_data = json.loads(self.rfile.read(content_length))
-                        local_id = post_data.get('local_id')
-                        server_id = post_data.get('server_id')
-                        
-                        if not local_id or not server_id:
-                            self._send_response(400, {"error": "Missing local_id or server_id"})
-                            return
-                        
-                        result = self.data_manager.mark_ticket_as_synced(local_id, server_id)
-                        if result:
-                            self._send_response(200, result)
-                        else:
-                            self._send_response(500, {"error": "Failed to mark ticket as synced"})
-                    else:
-                        self._send_response(404, {"error": "Not Found"})
-                
-                def get_local_dashboard(self):
-                    """สร้างหน้า Dashboard ง่ายๆ"""
-                    return f"""
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <title>RS232 Scale Client - Local Mode</title>
-                        <meta charset="utf-8">
-                        <style>
-                            body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                            .status {{ padding: 10px; margin: 10px 0; border-radius: 5px; }}
-                            .online {{ background-color: #d4edda; color: #155724; }}
-                            .offline {{ background-color: #f8d7da; color: #721c24; }}
-                            .weight {{ font-size: 48px; font-weight: bold; text-align: center; margin: 20px; }}
-                            .data {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; }}
-                        </style>
-                    </head>
-                    <body>
-                        <h1>⚖️ RS232 Scale Client - Local Mode</h1>
-                        
-                        <div class="status {'offline' if self.client_gui.is_offline_mode else 'online'}">
-                            Status: {'🔴 Offline Mode' if self.client_gui.is_offline_mode else '🟢 Online Mode'}
-                        </div>
-                        
-                        <div class="weight">
-                            {self.client_gui.last_weight} kg
-                        </div>
-                        
-                        <div class="data">
-                            <h3>Local Data Statistics</h3>
-                            <div id="stats">Loading...</div>
-                        </div>
-                        
-                        <script>
-                            // อัปเดตข้อมูลทุก 2 วินาที
-                            setInterval(async () => {{
-                                try {{
-                                    const response = await fetch('/api/weight');
-                                    const data = await response.json();
-                                    document.querySelector('.weight').textContent = data.weight + ' kg';
-                                }} catch (e) {{
-                                    console.log('Error fetching weight:', e);
-                                }}
-                            }}, 2000);
-                            
-                            // โหลดสถิติ
-                            async function loadStats() {{
-                                try {{
-                                    const response = await fetch('/api/local-data');
-                                    const stats = await response.json();
-                                    document.getElementById('stats').innerHTML = `
-                                        <p>Total Records: ${{stats.total}}</p>
-                                        <p>Synced: ${{stats.synced}}</p>
-                                        <p>Pending: ${{stats.unsynced}}</p>
-                                    `;
-                                }} catch (e) {{
-                                    console.log('Error fetching stats:', e);
-                                }}
-                            }}
-                            
-                            loadStats();
-                            setInterval(loadStats, 5000);
-                        </script>
-                    </body>
-                    </html>
-                    """
-                
-                def log_message(self, format, *args):
-                    """Override เพื่อไม่ให้ log ข้อความ HTTP"""
-                    pass
-            
-            # สร้าง server
-            self.server = HTTPServer(('localhost', self.port), LocalHandler)
-            self.server.client_gui = self.client_gui
-            
-            # เริ่ม server ใน thread แยก
-            self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-            self.server_thread.start()
-            
-            self.client_gui.log_message(f"Local web server started on http://localhost:{self.port}")
-            
-        except Exception as e:
-            self.client_gui.log_message(f"Error starting local web server: {e}")
-    
-    def stop_server(self):
-        """หยุด Local Web Server"""
-        try:
-            if self.server:
-                self.server.shutdown()
-                self.server.server_close()
-                self.client_gui.log_message("Local web server stopped")
-        except Exception as e:
-            self.client_gui.log_message(f"Error stopping local web server: {e}")
-
-class LocalAPIServer:
-    def __init__(self, data_manager, host='localhost', port=8080):
-        self.data_manager = data_manager
-        self.host = host
-        self.port = port
-        self.server = None
-        self.thread = None
-
-    def start_server(self):
-        if self.thread and self.thread.is_alive():
-            print("Local API server is already running.")
-            return
-
-        handler = self.create_handler()
-        self.server = HTTPServer((self.host, self.port), handler)
-        
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
-        print(f"Local API server started at http://{self.host}:{self.port}")
-
-    def stop_server(self):
-        if self.server:
-            self.server.shutdown()
-            self.thread.join()
-            print("Local API server stopped.")
-
-    def create_handler(self):
-        data_manager = self.data_manager
-        
-        class LocalAPIHandler(BaseHTTPRequestHandler):
-            def __init__(self, *args, **kwargs):
-                self.data_manager = data_manager
-                super().__init__(*args, **kwargs)
-
-            def _send_cors_headers(self):
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.send_header('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS')
-                self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-
-            def do_OPTIONS(self):
-                self.send_response(204)
-                self._send_cors_headers()
-                self.end_headers()
-
-            def _send_response(self, status_code, data=None):
-                self.send_response(status_code)
-                self.send_header('Content-type', 'application/json')
-                self._send_cors_headers()
-                self.end_headers()
-                if data:
-                    self.wfile.write(json.dumps(data, indent=4).encode('utf-8'))
-
-            def do_GET(self):
-                if self.path == '/api/tickets/':
-                    tickets = self.data_manager.get_local_tickets(completed=False)
-                    self._send_response(200, tickets)
-                elif self.path == '/api/tickets/completed':
-                    tickets = self.data_manager.get_local_tickets(completed=True)
-                    self._send_response(200, tickets)
-                else:
-                    self._send_response(404, {"error": "Not Found"})
-            
-            def do_POST(self):
-                if self.path == '/api/tickets/':
-                    content_length = int(self.headers['Content-Length'])
-                    post_data = json.loads(self.rfile.read(content_length))
-                    
-                    new_ticket = self.data_manager.create_local_ticket(post_data)
-                    if new_ticket:
-                        self._send_response(201, new_ticket)
-                    else:
-                        self._send_response(500, {"error": "Failed to create local ticket"})
-
-                elif self.path == '/api/tickets/mark-synced':
-                    content_length = int(self.headers['Content-Length'])
-                    post_data = json.loads(self.rfile.read(content_length))
-                    local_id = post_data.get('local_id')
-                    server_id = post_data.get('server_id')
-                    
-                    if not local_id or not server_id:
-                        self._send_response(400, {"error": "Missing local_id or server_id"})
-                        return
-                        
-                    result = self.data_manager.mark_ticket_as_synced(local_id, server_id)
-                    if result:
-                        self._send_response(200, result)
-                    else:
-                        self._send_response(500, {"error": "Failed to mark ticket as synced"})
-                
-                else:
-                    self._send_response(404, {"error": "Not Found"})
-
-            def do_PATCH(self):
-                path_parts = self.path.split('/')
-                if len(path_parts) == 4 and path_parts[1] == 'api' and path_parts[2] == 'tickets':
-                    ticket_id = path_parts[3]
-                    content_length = int(self.headers['Content-Length'])
-                    patch_data = json.loads(self.rfile.read(content_length))
-                    
-                    updated_ticket = self.data_manager.update_local_ticket_weigh_out(ticket_id, patch_data)
-                    
-                    if updated_ticket:
-                        self._send_response(200, updated_ticket)
-                    else:
-                        self._send_response(404, {"error": f"Ticket with id {ticket_id} not found or could not be updated."})
-                else:
-                    self._send_response(404, {"error": "Not Found"})
-
-        return LocalAPIHandler
-
-# ... existing code ...
-
-# เพิ่ม Local Data Manager Class
-class LocalDataManager:
-    def __init__(self, db_path='local_weight_data.db'):
-        self.db_path = db_path
-        self.conn = None
-        self.connect()
-        self.create_tables()
-
-    def connect(self):
-        """เชื่อมต่อฐานข้อมูล SQLite"""
-        try:
-            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            self.conn.row_factory = sqlite3.Row # ทำให้เข้าถึงคอลัมน์ด้วยชื่อได้
-        except Exception as e:
-            print(f"Error connecting to local DB: {e}")
-
-    def create_tables(self):
-        """สร้างตารางถ้ายังไม่มี"""
-        try:
-            cursor = self.conn.cursor()
-            # ตารางสำหรับเก็บข้อมูลน้ำหนัก
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS weight_records (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    weight TEXT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    status TEXT,
-                    branch TEXT,
-                    scale_pattern TEXT,
-                    synced BOOLEAN DEFAULT 0
-                )
-            ''')
-            
-            self.conn.commit()
-        except Exception as e:
-            print(f"Error creating tables: {e}")
-
-    def add_weight_record(self, weight, branch="", scale_pattern=""):
-        """บันทึกน้ำหนักใน Local Database"""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-                INSERT INTO weight_records (weight, status, synced, branch, scale_pattern)
-                VALUES (?, ?, 0, ?, ?)
-            ''', (weight, "local", branch, scale_pattern))
-            self.conn.commit()
-            return cursor.lastrowid
-        except Exception as e:
-            print(f"Error saving weight locally: {e}")
-            return None
-    
-    def get_unsynced_data(self):
-        """ดึงข้อมูลที่ยังไม่ได้ sync"""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-                SELECT id, weight, timestamp, status, branch, scale_pattern
-                FROM weight_records 
-                WHERE synced = 0 
-                ORDER BY timestamp
-            ''')
-            data = cursor.fetchall()
-            return data
-        except Exception as e:
-            print(f"Error getting unsynced data: {e}")
-            return []
-    
-    def mark_as_synced(self, record_id):
-        """ทำเครื่องหมายว่า sync แล้ว"""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-                UPDATE weight_records 
-                SET synced = 1 
-                WHERE id = ?
-            ''', (record_id,))
-            self.conn.commit()
-        except Exception as e:
-            print(f"Error marking as synced: {e}")
-    
-    def get_local_stats(self):
-        """ดึงสถิติข้อมูล Local"""
-        try:
-            cursor = self.conn.cursor()
-            
-            # นับจำนวนทั้งหมด
-            cursor.execute('SELECT COUNT(*) FROM weight_records')
-            total_records = cursor.fetchone()[0]
-            
-            # นับจำนวนที่ sync แล้ว
-            cursor.execute('SELECT COUNT(*) FROM weight_records WHERE synced = 1')
-            synced_records = cursor.fetchone()[0]
-            
-            # นับจำนวนที่ยังไม่ได้ sync
-            cursor.execute('SELECT COUNT(*) FROM weight_records WHERE synced = 0')
-            unsynced_records = cursor.fetchone()[0]
-            
-            return {
-                'total': total_records,
-                'synced': synced_records,
-                'unsynced': unsynced_records
-            }
-        except Exception as e:
-            print(f"Error getting local stats: {e}")
-            return {'total': 0, 'synced': 0, 'unsynced': 0}
-    
-    def export_to_csv(self, filename, start_date=None, end_date=None):
-        """Export ข้อมูลเป็น CSV"""
-        try:
-            cursor = self.conn.cursor()
-            
-            if start_date and end_date:
-                cursor.execute('''
-                    SELECT weight, timestamp, status, branch, scale_pattern
-                    FROM weight_records
-                    WHERE timestamp BETWEEN ? AND ?
-                    ORDER BY timestamp
-                ''', (start_date, end_date))
-            else:
-                cursor.execute('''
-                    SELECT weight, timestamp, status, branch, scale_pattern
-                    FROM weight_records
-                    ORDER BY timestamp
-                ''')
-            
-            data = cursor.fetchall()
-            
-            with open(filename, 'w', newline='', encoding='utf-8') as file:
-                writer = csv.writer(file)
-                writer.writerow(['Weight', 'Timestamp', 'Status', 'Branch', 'Scale Pattern'])
-                writer.writerows(data)
-            
-            return len(data)
-        except Exception as e:
-            print(f"Error exporting to CSV: {e}")
-            return 0
-
-# เพิ่ม Connection Monitor Class
+# Class ที่เกี่ยวข้องกับ Offline Mode ถูกลบออกแล้ว - ตอนนี้ระบบทำงานแบบ Online เท่านั้น
 
 if __name__ == '__main__':
     try:

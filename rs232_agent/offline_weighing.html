@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Offline Weighing System</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --primary-hover: #1d4ed8;
+            --secondary-color: #64748b;
+            --success-color: #059669;
+            --danger-color: #dc2626;
+            --info-color: #0891b2;
+            --bg-color: #f8fafc;
+            --text-color: #1e293b;
+            --card-bg: #ffffff;
+            --highlight-color: #dbeafe;
+            --border-color: #e2e8f0;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box; 
+        }
+        
+        html, body, #app {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--bg-color);
+            font-family: 'Tahoma', sans-serif;
+            color: var(--text-color);
+        }
+
+        body { 
+            font-family: 'Tahoma', sans-serif; 
+            background: var(--bg-color); 
+            min-height: 100vh; 
+        }
+        
+        .container { 
+            max-width: 1400px; 
+            margin: 0 auto; 
+            padding: 20px; 
+            height: 100vh;
+            display: flex;
+            flex-direction: row;
+            gap: 20px;
+        }
+        
+        /* Left Panel */
+        .left-panel {
+            width: 380px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        /* Right Panel */
+        .right-panel {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* Weight Display */
+        .weight-display { 
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border-radius: 16px; 
+            padding: 1.5rem; 
+            text-align: center; 
+            box-shadow: var(--shadow);
+            border: 1px solid #bae6fd;
+            position: relative;
+            min-height: 180px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .weight-value { 
+            font-size: 2.8rem; 
+            font-weight: bold; 
+            color: var(--primary-color); 
+            margin: 8px 0; 
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1); 
+            line-height: 1.1;
+        }
+        .weight-label { 
+            font-size: 1.1rem; 
+            color: var(--secondary-color); 
+            margin-bottom: 8px; 
+        }
+        .weight-time { 
+            font-size: 0.85rem; 
+            color: var(--secondary-color); 
+        }
+        
+        /* Ticket Panel */
+        .ticket-panel { 
+            background: var(--card-bg); 
+            border-radius: 12px; 
+            padding: 20px; 
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+            overflow-y: auto;
+            flex-grow: 1;
+            min-height: 400px;
+        }
+        .ticket-panel h3 { 
+            color: var(--text-color); 
+            margin-bottom: 15px; 
+            font-size: 1.2rem; 
+            border-bottom: 2px solid var(--primary-color); 
+            padding-bottom: 8px; 
+        }
+        
+        .ticket-item { 
+            background: white; 
+            border: 2px solid var(--border-color); 
+            border-radius: 12px; 
+            padding: 12px 15px; 
+            margin: 8px 0; 
+            cursor: pointer; 
+            transition: all 0.3s ease; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            min-height: auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr auto;
+            gap: 10px;
+            align-items: center;
+        }
+        .ticket-item:hover { 
+            transform: translateY(-3px); 
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15); 
+            border-color: var(--primary-color); 
+        }
+        .ticket-item.selected { 
+            border-color: var(--success-color); 
+            background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); 
+            box-shadow: 0 8px 25px rgba(76,175,80,0.3); 
+        }
+        .ticket-item.completed { 
+            border-color: #ff9800; 
+            background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); 
+        }
+        
+        .ticket-id { 
+            font-size: 1.2rem; 
+            font-weight: bold; 
+            color: var(--primary-color); 
+            margin: 0; 
+            line-height: 1.3;
+        }
+        .ticket-vehicle { 
+            font-size: 1.1rem; 
+            color: var(--text-color); 
+            margin-bottom: 8px; 
+            font-weight: 500;
+        }
+        .ticket-product {
+            font-size: 0.95rem;
+            color: var(--secondary-color);
+            margin-bottom: 8px;
+            font-style: italic;
+        }
+        .ticket-weight {
+            font-size: 1rem;
+            color: var(--success-color);
+            font-weight: 600;
+        }
+        
+        /* Management Panel */
+        .management-panel { 
+            background: var(--card-bg); 
+            border-radius: 12px; 
+            padding: 12px; 
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+            flex-shrink: 0;
+        }
+        .management-panel h3 { 
+            color: var(--text-color); 
+            margin-bottom: 10px; 
+            font-size: 1rem; 
+            border-bottom: 2px solid var(--primary-color); 
+            padding-bottom: 5px; 
+        }
+        
+        /* Create Ticket Form Panel */
+        .create-ticket-panel { 
+            background: var(--card-bg); 
+            border-radius: 8px; 
+            padding: 15px; 
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+            height: fit-content;
+        }
+        .create-ticket-panel h3 { 
+            color: var(--text-color); 
+            margin-bottom: 10px; 
+            font-size: 1.1rem; 
+            border-bottom: 2px solid var(--primary-color); 
+            padding-bottom: 5px; 
+        }
+        
+        .form-group { 
+            margin: 20px 0; 
+        }
+        label { 
+            display: block; 
+            margin-bottom: 8px; 
+            font-weight: 600; 
+            color: var(--text-color); 
+            font-size: 0.95rem; 
+        }
+        input, select { 
+            width: 100%; 
+            padding: 15px; 
+            border: 2px solid var(--border-color); 
+            border-radius: 8px; 
+            font-size: 1rem; 
+            transition: all 0.3s ease; 
+        }
+        input:focus, select:focus { 
+            border-color: var(--primary-color); 
+            outline: none; 
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); 
+        }
+        
+        /* Buttons */
+        .btn { 
+            padding: 12px 25px; 
+            border: none; 
+            border-radius: 8px; 
+            font-size: 0.95rem; 
+            font-weight: 600; 
+            cursor: pointer; 
+            transition: all 0.3s ease; 
+            margin: 6px; 
+            display: inline-block; 
+            text-decoration: none; 
+        }
+        .btn-primary { 
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-hover) 100%); 
+            color: white; 
+        }
+        .btn-primary:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 8px 25px rgba(37, 99, 235, 0.4); 
+        }
+        .btn-success { 
+            background: linear-gradient(135deg, var(--success-color) 0%, #059669 100%); 
+            color: white; 
+        }
+        .btn-success:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 8px 25px rgba(5, 150, 105, 0.4); 
+        }
+        .btn-warning { 
+            background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); 
+            color: white; 
+        }
+        .btn-warning:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 8px 25px rgba(255,152,0,0.4); 
+        }
+        .btn-secondary { 
+            background: linear-gradient(135deg, var(--secondary-color) 0%, #475569 100%); 
+            color: white; 
+        }
+        .btn-secondary:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 8px 25px rgba(100, 116, 139, 0.4); 
+        }
+        .btn-info { 
+            background: linear-gradient(135deg, var(--info-color) 0%, #0e7490 100%); 
+            color: white; 
+        }
+        .btn-info:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 8px 25px rgba(8, 145, 178, 0.4); 
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container { 
+                flex-direction: column; 
+                padding: 15px; 
+            }
+            .left-panel { 
+                width: 100%; 
+            }
+            .weight-value { font-size: 2.5rem; }
+        }
+        
+        /* Animations */
+        @keyframes fadeIn { 
+            from { opacity: 0; transform: translateY(20px); } 
+            to { opacity: 1; transform: translateY(0); } 
+        }
+        .fade-in { animation: fadeIn 0.5s ease-out; }
+        
+        /* Ticket Details */
+        .ticket-details { 
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); 
+            border-radius: 12px; 
+            padding: 15px; 
+            margin: 15px 0; 
+            border: 2px solid var(--info-color); 
+        }
+        .detail-row { 
+            display: flex; 
+            justify-content: space-between; 
+            margin: 8px 0; 
+            padding: 6px 0; 
+            border-bottom: 1px solid rgba(33,150,243,0.2); 
+        }
+        .detail-label { 
+            font-weight: 600; 
+            color: var(--info-color); 
+        }
+        .detail-value { 
+            color: var(--text-color); 
+        }
+
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            animation: fadeIn 0.3s ease-out;
+        }
+        
+        .modal-content {
+            background-color: var(--card-bg);
+            margin: 5% auto;
+            padding: 25px;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid var(--primary-color);
+        }
+        
+        .modal-header h3 {
+            margin: 0;
+            color: var(--text-color);
+            font-size: 1.4rem;
+        }
+        
+        .close {
+            color: var(--secondary-color);
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: color 0.3s ease;
+        }
+        
+        .close:hover {
+            color: var(--danger-color);
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateY(-50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        
+        /* Tab Styles */
+        .tabs {
+            display: flex;
+            margin-bottom: 15px;
+            border-bottom: 2px solid var(--border-color);
+        }
+        
+        .tab-button {
+            flex: 1;
+            padding: 12px 16px;
+            border: none;
+            background: transparent;
+            color: var(--secondary-color);
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-bottom: 3px solid transparent;
+        }
+        
+        .tab-button:hover {
+            color: var(--primary-color);
+            background: rgba(37, 99, 235, 0.05);
+        }
+        
+        .tab-button.active {
+            color: var(--primary-color);
+            border-bottom-color: var(--primary-color);
+            background: rgba(37, 99, 235, 0.1);
+        }
+        
+        .tab-content {
+            display: none;
+            min-height: 300px;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+
+        
+        <!-- Left Panel -->
+        <div class="left-panel">
+            <!-- Weight Display -->
+            <div class="weight-display fade-in">
+                <div class="weight-label">น้ำหนักปัจจุบัน</div>
+                <div id="currentWeight" class="weight-value">0.00</div>
+                <div class="weight-time">อัปเดตล่าสุด: <span id="lastUpdate">-</span></div>
+            </div>
+            
+
+                <div style="text-align: center; padding: 5px 0 0 0;">
+                    <button onclick="showCreateTicketModal()" class="btn btn-primary" style="width: 100%; padding: 15px; font-size: 1.1rem;">📝 สร้างบัตรชั่งใหม่</button>
+                    <button onclick="weighOut()" id="weighOutBtn" class="btn btn-success" disabled style="width: 100%; padding: 15px; font-size: 1.1rem; opacity: 0.5; cursor: not-allowed;">⚖️ ชั่งน้ำหนักออก</button>
+                </div>
+                <!-- Select Ticket Panel -->
+            <div class="create-ticket-panel">
+                <h3>📝 บัตรชั่งที่เลือก</h3>
+                <div id="selectedTicketDisplay" style="min-height: 80px; padding: 10px; background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%); border-radius: 8px; border: 2px solid var(--border-color);">
+                    <p style="text-align: center; color: var(--secondary-color); font-style: italic; margin-top: 15px;">ยังไม่ได้เลือกบัตรชั่ง</p>
+                </div>
+            </div>
+            
+            <!-- Management Panel -->
+            <div class="management-panel">
+                <h3>⚙️ การจัดการ</h3>
+                <div style="text-align: center; padding: 10px 0;">
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <div style="display: flex; gap: 6px; justify-content: center;">
+                            <button onclick="printReport()" class="btn btn-info">🖨️ พิมพ์รายงาน</button>
+                        </div>
+                        <div style="display: flex; gap: 6px; justify-content: center;">
+                            <button onclick="syncData()" class="btn btn-primary">🔄 ซิงค์ข้อมูล</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Right Panel -->
+        <div class="right-panel">
+            <!-- Ticket List Panel with Tabs -->
+            <div class="ticket-panel">
+                <h3>📋 รายการบัตรชั่ง</h3>
+                
+                <!-- Tabs -->
+                <div class="tabs">
+                    <button class="tab-button active" onclick="switchTab('inbound')">📥 รายการชั่งเข้า</button>
+                    <button class="tab-button" onclick="switchTab('outbound')">📤 รายการชั่งออก</button>
+                </div>
+                
+                <!-- Tab Content -->
+                <div id="inboundTab" class="tab-content active">
+                    <div id="inboundTicketList">
+                        <div class="ticket-header" style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr auto; gap: 10px; padding: 10px; background: var(--highlight-color); border-radius: 8px; margin-bottom: 10px; font-weight: 600; color: var(--text-color);">
+                            <div>บัตรชั่ง</div>
+                            <div>ชื่อร้าน</div>
+                            <div>จำนวน</div>
+                            <div>น้ำหนัก</div>
+                            <div>การจัดการ</div>
+                        </div>
+                        <p style="text-align: center; color: var(--secondary-color); font-style: italic; margin-top: 20px;">ยังไม่มีบัตรชั่งเข้า</p>
+                    </div>
+                </div>
+                
+                <div id="outboundTab" class="tab-content">
+                    <div id="outboundTicketList">
+                        <div class="ticket-header" style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr auto; gap: 10px; padding: 10px; background: var(--highlight-color); border-radius: 8px; margin-bottom: 10px; font-weight: 600; color: var(--text-color);">
+                            <div>บัตรชั่ง</div>
+                            <div>ชื่อร้าน</div>
+                            <div>จำนวน</div>
+                            <div>น้ำหนัก</div>
+                            <div>การจัดการ</div>
+                        </div>
+                        <p style="text-align: center; color: var(--secondary-color); font-style: italic; margin-top: 20px;">ยังไม่มีบัตรชั่งออก</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal for Create Ticket -->
+    <div id="createTicketModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📝 สร้างบัตรชั่งใหม่</h3>
+                <span class="close" onclick="closeCreateModal()">&times;</span>
+            </div>
+            <form id="ticketForm">
+                <div class="form-group">
+                    <label>เลขทะเบียนรถ:</label>
+                    <input type="text" id="vehicleNumber" placeholder="เช่น กข-1234" required>
+                </div>
+                <div class="form-group">
+                    <label>ชื่อคนขับ:</label>
+                    <input type="text" id="driverName" placeholder="ชื่อ-นามสกุล">
+                </div>
+                <div class="form-group">
+                    <label>ชื่อร้าน:</label>
+                    <input type="text" id="storeName" placeholder="เช่น ร้านค้าทั่วไป">
+                </div>
+                <div class="form-group">
+                    <label>สินค้า/รายการ:</label>
+                    <input type="text" id="product" placeholder="เช่น ข้าวสาร, ทราย">
+                </div>
+                <div class="form-group">
+                    <label>จำนวน:</label>
+                    <input type="text" id="quantity" placeholder="เช่น 10 กระสอบ, 5 ตัน">
+                </div>
+                <div class="form-group">
+                    <label>น้ำหนักชั่งเข้า (kg):</label>
+                    <input type="number" id="weightIn" step="1" placeholder="0" readonly style="background-color: #f8f9fa; cursor: not-allowed;">
+                    <small style="color: var(--secondary-color); font-size: 0.85rem;">น้ำหนักปัจจุบัน: <span id="currentWeightDisplay">0</span> kg</small>
+                </div>
+                <button type="submit" class="btn btn-primary">📝 สร้างบัตรชั่ง</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal for Ticket Details -->
+    <div id="ticketModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📋 รายละเอียดบัตรชั่ง</h3>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <div id="selectedTicketInfo"></div>
+            <div class="form-group">
+                <label>น้ำหนักชั่งออก (kg):</label>
+                <input type="number" id="weightOut" step="1" placeholder="0">
+                <button onclick="completeSelectedTicket()" class="btn btn-success" style="width: 100%; margin-top: 10px;">✅ เสร็จสิ้นการชั่ง</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let tickets = [];
+        let selectedTicket = null;
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            updateTicketList();
+            updateWeight();
+            updateWeighOutButton();
+        });
+        
+        // Create ticket form
+        document.getElementById('ticketForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            createTicket();
+        });
+        
+        // Tab switching
+        function switchTab(tabName) {
+            // Remove active class from all tabs and content
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            // Add active class to selected tab and content
+            event.target.classList.add('active');
+            document.getElementById(tabName + 'Tab').classList.add('active');
+        }
+        
+        // Show create ticket modal
+        function showCreateTicketModal() {
+            const currentWeight = document.getElementById('currentWeight').textContent;
+            document.getElementById('currentWeightDisplay').textContent = currentWeight;
+            document.getElementById('weightIn').value = currentWeight;
+            document.getElementById('createTicketModal').style.display = 'block';
+        }
+        
+        // Close create ticket modal
+        function closeCreateModal() {
+            document.getElementById('createTicketModal').style.display = 'none';
+            document.getElementById('ticketForm').reset();
+        }
+        
+        function createTicket() {
+            const vehicleNumber = document.getElementById('vehicleNumber').value;
+            const driverName = document.getElementById('driverName').value;
+            const storeName = document.getElementById('storeName').value;
+            const product = document.getElementById('product').value;
+            const quantity = document.getElementById('quantity').value;
+            const weightIn = parseFloat(document.getElementById('weightIn').value);
+            
+            if (!weightIn || weightIn <= 0) {
+                showNotification('ไม่สามารถอ่านน้ำหนักได้!', 'error');
+                return;
+            }
+            
+            const ticket = {
+                id: 'L' + String(tickets.length + 1).padStart(3, '0'),
+                vehicleNumber: vehicleNumber,
+                driverName: driverName,
+                storeName: storeName,
+                product: product,
+                quantity: quantity,
+                weightIn: weightIn,
+                weightOut: null,
+                netWeight: null,
+                weighInTime: new Date().toLocaleString('th-TH'),
+                weighOutTime: null,
+                status: 'active'
+            };
+            
+            tickets.push(ticket);
+            closeCreateModal();
+            updateTicketList();
+            
+            // Show success message
+            showNotification(`สร้างบัตรชั่ง ${ticket.id} สำเร็จ! น้ำหนัก: ${weightIn} kg`, 'success');
+        }
+        
+        function selectTicket(ticketId) {
+            selectedTicket = tickets.find(t => t.id === ticketId);
+            if (selectedTicket) {
+                updateTicketSelection();
+                updateWeighOutButton();
+                showNotification(`เลือกบัตรชั่ง ${selectedTicket.id}`, 'info');
+            }
+        }
+        
+        function viewTicketDetails(ticketId) {
+            selectedTicket = tickets.find(t => t.id === ticketId);
+            if (selectedTicket) {
+                showTicketDetails();
+            }
+        }
+        
+        function updateTicketSelection() {
+            document.querySelectorAll('.ticket-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            
+            if (selectedTicket) {
+                const ticketElement = document.querySelector(`[data-ticket-id="${selectedTicket.id}"]`);
+                if (ticketElement) {
+                    ticketElement.classList.add('selected');
+                }
+                updateSelectedTicketDisplay();
+            } else {
+                updateSelectedTicketDisplay();
+            }
+        }
+        
+        function updateSelectedTicketDisplay() {
+            const displayDiv = document.getElementById('selectedTicketDisplay');
+            
+            if (selectedTicket) {
+                displayDiv.innerHTML = `
+                    <div style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border-radius: 8px; padding: 10px; border: 2px solid var(--success-color); text-align: left;">
+                        <div style="font-size: 1.1rem; font-weight: bold; color: var(--success-color);">
+                            ${selectedTicket.id}-(${selectedTicket.vehicleNumber})
+                        </div>
+                    </div>
+                `;
+            } else {
+                displayDiv.innerHTML = `
+                    <p style="text-align: center; color: var(--secondary-color); font-style: italic; margin-top: 15px;">ยังไม่ได้เลือกบัตรชั่ง</p>
+                `;
+            }
+        }
+        
+        function showTicketDetails() {
+            if (selectedTicket) {
+                const infoDiv = document.getElementById('selectedTicketInfo');
+                
+                infoDiv.innerHTML = `
+                    <div class="ticket-details">
+                        <div class="detail-row">
+                            <span class="detail-label">บัตรชั่ง:</span>
+                            <span class="detail-value">${selectedTicket.id}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">รถ:</span>
+                            <span class="detail-value">${selectedTicket.vehicleNumber}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">คนขับ:</span>
+                            <span class="detail-value">${selectedTicket.driverName}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">ชื่อร้าน:</span>
+                            <span class="detail-value">${selectedTicket.storeName}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">สินค้า:</span>
+                            <span class="detail-value">${selectedTicket.product}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">จำนวน:</span>
+                            <span class="detail-value">${selectedTicket.quantity || '-'}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">น้ำหนักเข้า:</span>
+                            <span class="detail-value">${selectedTicket.weightIn} kg</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">น้ำหนักออก:</span>
+                            <span class="detail-value">${selectedTicket.weightOut || 'รอชั่งออก'}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">น้ำหนักสุทธิ:</span>
+                            <span class="detail-value">${selectedTicket.netWeight || 'รอชั่งออก'} kg</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">เวลาเข้า:</span>
+                            <span class="detail-value">${selectedTicket.weighInTime}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">เวลาออก:</span>
+                            <span class="detail-value">${selectedTicket.weightOut ? selectedTicket.weighOutTime : 'รอชั่งออก'}</span>
+                        </div>
+                    </div>
+                `;
+                
+                // แสดง modal
+                document.getElementById('ticketModal').style.display = 'block';
+            }
+        }
+        
+        function closeModal() {
+            document.getElementById('ticketModal').style.display = 'none';
+            document.getElementById('weightOut').value = '';
+        }
+        
+        // ปิด modal เมื่อคลิกนอก modal
+        window.onclick = function(event) {
+            const ticketModal = document.getElementById('ticketModal');
+            const createModal = document.getElementById('createTicketModal');
+            
+            if (event.target == ticketModal) {
+                closeModal();
+            }
+            if (event.target == createModal) {
+                closeCreateModal();
+            }
+        }
+        
+        function completeSelectedTicket() {
+            if (!selectedTicket) {
+                showNotification('กรุณาเลือกบัตรชั่งก่อน!', 'error');
+                return;
+            }
+            
+            const weightOut = document.getElementById('weightOut').value;
+            if (!weightOut) {
+                showNotification('กรุณาใส่น้ำหนักชั่งออก!', 'error');
+                return;
+            }
+            
+            selectedTicket.weightOut = parseFloat(weightOut);
+            selectedTicket.netWeight = selectedTicket.weightOut - selectedTicket.weightIn;
+            selectedTicket.weighOutTime = new Date().toLocaleString('th-TH');
+            selectedTicket.status = 'completed';
+            
+            updateTicketList();
+            updateSelectedTicketDisplay();
+            updateWeighOutButton();
+            closeModal();
+            
+            showNotification(`บัตรชั่ง ${selectedTicket.id} เสร็จสิ้น! น้ำหนักสุทธิ: ${selectedTicket.netWeight} kg`, 'success');
+        }
+        
+        function updateTicketList() {
+            const inboundContainer = document.getElementById('inboundTicketList');
+            const outboundContainer = document.getElementById('outboundTicketList');
+            
+            // Clear containers
+            inboundContainer.innerHTML = '';
+            outboundContainer.innerHTML = '';
+            
+            // Separate tickets by status
+            const inboundTickets = tickets.filter(ticket => ticket.status === 'active');
+            const outboundTickets = tickets.filter(ticket => ticket.status === 'completed');
+            
+            // Update inbound tickets
+            if (inboundTickets.length === 0) {
+                inboundContainer.innerHTML = `
+                    <div class="ticket-header" style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; padding: 10px; background: var(--highlight-color); border-radius: 8px; margin-bottom: 10px; font-weight: 600; color: var(--text-color);">
+                        <div>บัตรชั่ง</div>
+                        <div>ชื่อร้าน</div>
+                        <div>จำนวน</div>
+                        <div>น้ำหนัก</div>
+                    </div>
+                    <p style="text-align: center; color: var(--secondary-color); font-style: italic; margin-top: 20px;">ยังไม่มีบัตรชั่งเข้า</p>
+                `;
+            } else {
+                // Add header
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'ticket-header';
+                headerDiv.style.cssText = 'display: grid; grid-template-columns: 1fr 1fr 1fr 1fr auto; gap: 10px; padding: 10px; background: var(--highlight-color); border-radius: 8px; margin-bottom: 10px; font-weight: 600; color: var(--text-color);';
+                headerDiv.innerHTML = `
+                    <div>บัตรชั่ง</div>
+                    <div>ชื่อร้าน</div>
+                    <div>จำนวน</div>
+                    <div>น้ำหนัก</div>
+                    <div>การจัดการ</div>
+                `;
+                inboundContainer.appendChild(headerDiv);
+                
+                inboundTickets.forEach(ticket => {
+                    const ticketDiv = document.createElement('div');
+                    ticketDiv.className = `ticket-item ${ticket.status} fade-in`;
+                    ticketDiv.setAttribute('data-ticket-id', ticket.id);
+                    ticketDiv.onclick = () => selectTicket(ticket.id);
+                    
+                    ticketDiv.innerHTML = `
+                        <div class="ticket-id">${ticket.id}</div>
+                        <div>${ticket.storeName || '-'}</div>
+                        <div>${ticket.quantity || '-'}</div>
+                        <div>${ticket.weightIn} kg</div>
+                        <div>
+                            <button onclick="event.stopPropagation(); viewTicketDetails('${ticket.id}')" class="btn btn-info" style="padding: 5px 10px; font-size: 0.8rem; margin: 0;">🔍</button>
+                        </div>
+                    `;
+                    
+                    inboundContainer.appendChild(ticketDiv);
+                });
+            }
+            
+            // Update outbound tickets
+            if (outboundTickets.length === 0) {
+                outboundContainer.innerHTML = `
+                    <div class="ticket-header" style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; padding: 10px; background: var(--highlight-color); border-radius: 8px; margin-bottom: 10px; font-weight: 600; color: var(--text-color);">
+                        <div>บัตรชั่ง</div>
+                        <div>ชื่อร้าน</div>
+                        <div>จำนวน</div>
+                        <div>น้ำหนักสุทธิ</div>
+                    </div>
+                    <p style="text-align: center; color: var(--secondary-color); font-style: italic; margin-top: 20px;">ยังไม่มีบัตรชั่งออก</p>
+                `;
+            } else {
+                // Add header
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'ticket-header';
+                headerDiv.style.cssText = 'display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; padding: 10px; background: var(--highlight-color); border-radius: 8px; margin-bottom: 10px; font-weight: 600; color: var(--text-color);';
+                headerDiv.innerHTML = `
+                    <div>บัตรชั่ง</div>
+                    <div>ชื่อร้าน</div>
+                    <div>จำนวน</div>
+                    <div>น้ำหนักสุทธิ</div>
+                `;
+                outboundContainer.appendChild(headerDiv);
+                
+                outboundTickets.forEach(ticket => {
+                    const ticketDiv = document.createElement('div');
+                    ticketDiv.className = `ticket-item ${ticket.status} fade-in`;
+                    ticketDiv.setAttribute('data-ticket-id', ticket.id);
+                    ticketDiv.onclick = () => selectTicket(ticket.id);
+                    
+                    ticketDiv.innerHTML = `
+                        <div class="ticket-id">${ticket.id}</div>
+                        <div>${ticket.storeName || '-'}</div>
+                        <div>${ticket.quantity || '-'}</div>
+                        <div>${ticket.netWeight} kg</div>
+                        <div>
+                            <button onclick="event.stopPropagation(); viewTicketDetails('${ticket.id}')" class="btn btn-info" style="padding: 5px 10px; font-size: 0.8rem; margin: 0;">🔍</button>
+                        </div>
+                    `;
+                    
+                    outboundContainer.appendChild(ticketDiv);
+                });
+            }
+        }
+        
+        function updateWeighOutButton() {
+            const weighOutBtn = document.getElementById('weighOutBtn');
+            if (selectedTicket && selectedTicket.status === 'active' && selectedTicket.weightIn) {
+                weighOutBtn.disabled = false;
+                weighOutBtn.style.opacity = '1';
+                weighOutBtn.style.cursor = 'pointer';
+            } else {
+                weighOutBtn.disabled = true;
+                weighOutBtn.style.opacity = '0.5';
+                weighOutBtn.style.cursor = 'not-allowed';
+            }
+        }
+        
+        function weighOut() {
+            if (!selectedTicket) {
+                showNotification('กรุณาเลือกบัตรชั่งก่อน!', 'error');
+                return;
+            }
+            
+            if (selectedTicket.status !== 'active') {
+                showNotification('บัตรชั่งนี้เสร็จสิ้นแล้ว!', 'error');
+                return;
+            }
+            
+            // เปิด Modal รายละเอียดบัตรชั่ง
+            showTicketDetails();
+            
+            // ใส่น้ำหนักปัจจุบันในช่องน้ำหนักออก
+            setTimeout(() => {
+                const currentWeight = document.getElementById('currentWeight').textContent;
+                document.getElementById('weightOut').value = currentWeight;
+                showNotification('ใส่น้ำหนักปัจจุบันแล้ว กรุณาตรวจสอบและกดเสร็จสิ้นการชั่ง', 'info');
+            }, 100);
+        }
+        
+        function generateReport() {
+            if (tickets.length === 0) {
+                showNotification('ไม่มีข้อมูลบัตรชั่ง!', 'error');
+                return;
+            }
+            
+            let report = '=== รายงานการชั่งน้ำหนัก ===\n\n';
+            tickets.forEach(ticket => {
+                report += `บัตรชั่ง: ${ticket.id}\n`;
+                report += `รถ: ${ticket.vehicleNumber}\n`;
+                report += `คนขับ: ${ticket.driverName}\n`;
+                report += `ชื่อร้าน: ${ticket.storeName}\n`;
+                report += `สินค้า: ${ticket.product}\n`;
+                report += `จำนวน: ${ticket.quantity || '-'}\n`;
+                report += `น้ำหนักเข้า: ${ticket.weightIn} kg\n`;
+                report += `น้ำหนักออก: ${ticket.weightOut || 'รอชั่งออก'} kg\n`;
+                report += `น้ำหนักสุทธิ: ${ticket.netWeight || 'รอชั่งออก'} kg\n`;
+                report += `สถานะ: ${ticket.status === 'active' ? 'กำลังใช้งาน' : 'เสร็จสิ้น'}\n`;
+                report += `เวลาเข้า: ${ticket.weighInTime}\n`;
+                report += `เวลาออก: ${ticket.weightOut ? ticket.weighOutTime : 'รอชั่งออก'}\n`;
+                report += '---\n\n';
+            });
+            
+            const blob = new Blob([report], { type: 'text/plain;charset=utf-8' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'รายงานการชั่งน้ำหนัก.txt';
+            a.click();
+            
+            showNotification('สร้างรายงานสำเร็จ!', 'success');
+        }
+        
+        function syncData() {
+            showNotification('ฟังก์ชันซิงค์จะทำงานเมื่อกลับสู่โหมดออนไลน์', 'info');
+        }
+        
+        function printReport() {
+            if (tickets.length === 0) {
+                showNotification('ไม่มีข้อมูลบัตรชั่ง!', 'error');
+                return;
+            }
+            
+            let report = '=== รายงานการชั่งน้ำหนัก ===\n\n';
+            tickets.forEach(ticket => {
+                report += `บัตรชั่ง: ${ticket.id}\n`;
+                report += `รถ: ${ticket.vehicleNumber}\n`;
+                report += `คนขับ: ${ticket.driverName}\n`;
+                report += `ชื่อร้าน: ${ticket.storeName}\n`;
+                report += `สินค้า: ${ticket.product}\n`;
+                report += `จำนวน: ${ticket.quantity || '-'}\n`;
+                report += `น้ำหนักเข้า: ${ticket.weightIn} kg\n`;
+                report += `น้ำหนักออก: ${ticket.weightOut || 'รอชั่งออก'} kg\n`;
+                report += `น้ำหนักสุทธิ: ${ticket.netWeight || 'รอชั่งออก'} kg\n`;
+                report += `สถานะ: ${ticket.status === 'active' ? 'กำลังใช้งาน' : 'เสร็จสิ้น'}\n`;
+                report += `เวลาเข้า: ${ticket.weighInTime}\n`;
+                report += `เวลาออก: ${ticket.weightOut ? ticket.weighOutTime : 'รอชั่งออก'}\n`;
+                report += '---\n\n';
+            });
+            
+            // Open print dialog
+            const printWindow = window.open('', '_blank');
+            printWindow.document.write(`
+                <html>
+                    <head>
+                        <title>รายงานการชั่งน้ำหนัก</title>
+                        <style>
+                            body { font-family: 'Tahoma', sans-serif; margin: 20px; }
+                            h1 { text-align: center; color: #2563eb; }
+                            pre { white-space: pre-wrap; font-size: 14px; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1>รายงานการชั่งน้ำหนัก</h1>
+                        <pre>${report}</pre>
+                    </body>
+                </html>
+            `);
+            printWindow.document.close();
+            printWindow.print();
+            
+            showNotification('เปิดหน้าต่างพิมพ์แล้ว', 'success');
+        }
+        
+        
+        function updateWeight() {
+            const randomWeight = Math.round(Math.random() * 1000);
+            document.getElementById('currentWeight').innerHTML = `${randomWeight}`;
+            document.getElementById('lastUpdate').innerHTML = new Date().toLocaleString('th-TH');
+        }
+        
+        function showNotification(message, type) {
+            // Simple notification system
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed; top: 20px; right: 20px; padding: 15px 20px; 
+                border-radius: 8px; color: white; font-weight: 600; z-index: 1000;
+                background: ${type === 'success' ? 'var(--success-color)' : type === 'error' ? 'var(--danger-color)' : 'var(--info-color)'};
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15); transform: translateX(100%);
+                transition: transform 0.3s ease;
+            `;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => notification.style.transform = 'translateX(0)', 100);
+            setTimeout(() => {
+                notification.style.transform = 'translateX(100%)';
+                setTimeout(() => document.body.removeChild(notification), 300);
+            }, 3000);
+        }
+        
+        // Update weight every 2 seconds
+        setInterval(updateWeight, 2000);
+    </script>
+</body>
+</html>
+
